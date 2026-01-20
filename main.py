@@ -25,9 +25,11 @@ def telegram_webhook():
 
 from flask import make_response
 
+from flask import make_response
+
 @app.route("/asana", methods=["POST"])
 def asana_webhook():
-    # 🔐 Подтверждение webhook Asana
+    # Подтверждение webhook
     hook_secret = request.headers.get("X-Hook-Secret")
     if hook_secret:
         response = make_response("")
@@ -37,14 +39,24 @@ def asana_webhook():
     data = request.json
     events = data.get("events", [])
 
+    # Флаг, чтобы отправить ТОЛЬКО ОДНО сообщение
+    notified = False
+
     for event in events:
+        # Нас интересуют только изменения
+        if event.get("action") != "changed":
+            continue
+
         resource = event.get("resource", {})
         resource_name = resource.get("name", "Заявка")
 
-        send_message(
-            f"📌 Обновление заявки из Asana\n\n"
-            f"Заявка: {resource_name}"
-        )
+        # Пока упрощённо: одно уведомление на любое изменение
+        if not notified:
+            send_message(
+                f"📌 Заявка обновлена\n\n"
+                f"Заявка: {resource_name}"
+            )
+            notified = True
 
     return "ok"
 
