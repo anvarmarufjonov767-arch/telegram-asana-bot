@@ -7,17 +7,13 @@ app = Flask(__name__)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-users = set()
+ADMIN_CHAT_ID = 927536383  # твой chat_id
 
-def send_message(chat_id, text, reply_markup=None):
-    payload = {
-        "chat_id": chat_id,
-        "text": text
-    }
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
-
-    requests.post(f"{TELEGRAM_API}/sendMessage", json=payload)
+def send_message(text):
+    requests.post(
+        f"{TELEGRAM_API}/sendMessage",
+        json={"chat_id": ADMIN_CHAT_ID, "text": text}
+    )
 
 @app.route("/", methods=["GET"])
 def index():
@@ -25,47 +21,27 @@ def index():
 
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
-    data = request.json
-
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-
-        send_message(
-            chat_id,
-            f"🆔 Ваш chat_id:\n{chat_id}"
-        )
-
     return "ok"
 
+@app.route("/asana", methods=["POST"])
+def asana_webhook():
+    data = request.json
 
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
+    # Asana присылает события списком
+    events = data.get("events", [])
 
-        if text == "/start":
-            users.add(chat_id)
+    for event in events:
+        resource = event.get("resource", {})
+        resource_name = resource.get("name", "Заявка")
 
-            keyboard = {
-                "keyboard": [
-                    [{"text": "📩 Отправить тестовое уведомление"}]
-                ],
-                "resize_keyboard": True
-            }
-
-            send_message(
-                chat_id,
-                "Вы зарегистрированы ✅\nНажмите кнопку ниже для теста:",
-                reply_markup=keyboard
-            )
-
-        elif text == "📩 Отправить тестовое уведомление":
-            send_message(
-                chat_id,
-                "🔔 Тестовое уведомление\n\nБот работает корректно ✅"
-            )
+        send_message(
+            f"📌 Обновление заявки\n\n"
+            f"Заявка: {resource_name}"
+        )
 
     return "ok"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
