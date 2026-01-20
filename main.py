@@ -9,6 +9,16 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 users = set()
 
+def send_message(chat_id, text, reply_markup=None):
+    payload = {
+        "chat_id": chat_id,
+        "text": text
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+
+    requests.post(f"{TELEGRAM_API}/sendMessage", json=payload)
+
 @app.route("/", methods=["GET"])
 def index():
     return "Bot is running"
@@ -23,15 +33,27 @@ def telegram_webhook():
 
         if text == "/start":
             users.add(chat_id)
-            send_message(chat_id, "Вы зарегистрированы для получения уведомлений ✅")
+
+            keyboard = {
+                "keyboard": [
+                    [{"text": "📩 Отправить тестовое уведомление"}]
+                ],
+                "resize_keyboard": True
+            }
+
+            send_message(
+                chat_id,
+                "Вы зарегистрированы ✅\nНажмите кнопку ниже для теста:",
+                reply_markup=keyboard
+            )
+
+        elif text == "📩 Отправить тестовое уведомление":
+            send_message(
+                chat_id,
+                "🔔 Тестовое уведомление\n\nБот работает корректно ✅"
+            )
 
     return "ok"
-
-def send_message(chat_id, text):
-    requests.post(
-        f"{TELEGRAM_API}/sendMessage",
-        json={"chat_id": chat_id, "text": text}
-    )
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
