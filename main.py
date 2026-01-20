@@ -31,6 +31,15 @@ def telegram_webhook():
         chat_id = data["message"]["chat"]["id"]
         text = data["message"].get("text", "")
 
+        print(f"CHAT_ID: {chat_id} | TEXT: {text}")
+
+    return "ok"
+
+
+    if "message" in data:
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text", "")
+
         if text == "/start":
             users.add(chat_id)
 
