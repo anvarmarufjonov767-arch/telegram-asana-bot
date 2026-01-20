@@ -29,9 +29,11 @@ def telegram_webhook():
 
     if "message" in data:
         chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
 
-        print(f"CHAT_ID: {chat_id} | TEXT: {text}")
+        send_message(
+            chat_id,
+            f"🆔 Ваш chat_id:\n{chat_id}"
+        )
 
     return "ok"
 
