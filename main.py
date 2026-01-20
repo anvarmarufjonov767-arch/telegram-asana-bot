@@ -23,11 +23,18 @@ def index():
 def telegram_webhook():
     return "ok"
 
+from flask import make_response
+
 @app.route("/asana", methods=["POST"])
 def asana_webhook():
-    data = request.json
+    # 🔐 Подтверждение webhook Asana
+    hook_secret = request.headers.get("X-Hook-Secret")
+    if hook_secret:
+        response = make_response("")
+        response.headers["X-Hook-Secret"] = hook_secret
+        return response
 
-    # Asana присылает события списком
+    data = request.json
     events = data.get("events", [])
 
     for event in events:
@@ -35,11 +42,12 @@ def asana_webhook():
         resource_name = resource.get("name", "Заявка")
 
         send_message(
-            f"📌 Обновление заявки\n\n"
+            f"📌 Обновление заявки из Asana\n\n"
             f"Заявка: {resource_name}"
         )
 
     return "ok"
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
