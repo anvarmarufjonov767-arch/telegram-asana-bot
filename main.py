@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask, request, make_response
 import requests
 import os
 
@@ -23,10 +23,6 @@ def index():
 def telegram_webhook():
     return "ok"
 
-from flask import make_response
-
-from flask import make_response
-
 @app.route("/asana", methods=["POST"])
 def asana_webhook():
     # Подтверждение webhook
@@ -39,27 +35,52 @@ def asana_webhook():
     data = request.json
     events = data.get("events", [])
 
-    # Флаг, чтобы отправить ТОЛЬКО ОДНО сообщение
-    notified = False
-
     for event in events:
-        # Нас интересуют только изменения
         if event.get("action") != "changed":
             continue
 
-        resource = event.get("resource", {})
-        resource_name = resource.get("name", "Заявка")
+        task = event.get("resource", {})
+        task_gid = task.get("gid")
+        task_name = task.get("name", "Заявка")
 
-        # Пока упрощённо: одно уведомление на любое изменение
-        if not notified:
+        if not task_gid:
+            continue
+
+        # Запрашиваем полные данные задачи
+        headers = {"Authorization": f"Bearer {os.environ.get('ASANA_TOKEN')}"}
+        task_data = requests.get(
+            f"https://app.asana.com/api/1.0/tasks/{task_gid}",
+            headers=headers,
+            params={"opt_fields": "custom_fields.name,custom_fields.display_value"}
+        ).json()
+
+        fields = task_data.get("data", {}).get("custom_fields", [])
+
+        status = None
+        reason = None
+
+        for field in fields:
+            if field["name"] == "Статус заявки":
+                status = field["display_value"]
+            if field["name"] == "Причина отказа":
+                reason = field["display_value"]
+
+        if status == "✅ Одобрено":
             send_message(
-                f"📌 Заявка обновлена\n\n"
-                f"Заявка: {resource_name}"
+                f"✅ Заявка одобрена\n\n"
+                f"Название: {task_name}"
             )
-            notified = True
+            return "ok"
+
+        if status == "❌ Отклонено":
+            send_message(
+                f"❌ Заявка отклонена\n\n"
+                f"Название: {task_name}\n"
+                f"Причина: {reason or 'не указана'}"
+            )
+            return "ok"
 
     return "ok"
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
