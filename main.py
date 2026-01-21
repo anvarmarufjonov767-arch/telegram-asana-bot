@@ -65,20 +65,12 @@ def asana_webhook():
             if field["name"] == "Причина отказа":
                 reason = field["display_value"]
 
-        if status == "✅ Одобрено":
-            send_message(
-                f"✅ Заявка одобрена\n\n"
-                f"Название: {task_name}"
-            )
-            return "ok"
-
-        if status == "❌ Отклонено":
-            send_message(
-                f"❌ Заявка отклонена\n\n"
-                f"Название: {task_name}\n"
-                f"Причина: {reason or 'не указана'}"
-            )
-            return "ok"
+       send_message(
+    f"DEBUG\n\n"
+    f"Название: {task_name}\n"
+    f"Статус: {status}\n"
+    f"Причина: {reason}"
+)
 
     return "ok"
 
