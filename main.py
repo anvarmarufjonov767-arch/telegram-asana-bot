@@ -45,7 +45,6 @@ def asana_webhook():
 
         task = event.get("resource", {})
         task_gid = task.get("gid")
-        task_name = task.get("name", "Заявка")
 
         if not task_gid:
             continue
@@ -54,29 +53,45 @@ def asana_webhook():
             "Authorization": f"Bearer {ASANA_TOKEN}"
         }
 
-        # Получаем детали задачи + approval
+        # Получаем задачу целиком
         task_response = requests.get(
             f"https://app.asana.com/api/1.0/tasks/{task_gid}",
             headers=headers,
             params={
-                "opt_fields": "approval_status,name"
+                "opt_fields": "name,notes,approval_status,custom_fields.name,custom_fields.display_value"
             }
         ).json()
 
         task_data = task_response.get("data", {})
+        task_name = task_data.get("name", "Заявка")
         approval_status = task_data.get("approval_status")
+        notes = task_data.get("notes", "")
 
-        # Одобрено
+        # --- ФИО из описания ---
+        fio = "не указано"
+        for line in notes.splitlines():
+            if "ФИО" in line:
+                fio = line.split(":", 1)[-1].strip()
+                break
+
+        # --- Табель № из кастомного поля ---
+        tab_number = "не указан"
+        for field in task_data.get("custom_fields", []):
+            if field.get("name") == "Табель №":
+                tab_number = field.get("display_value") or tab_number
+
+        # --- Одобрено ---
         if approval_status == "approved":
             send_message(
                 f"✅ Заявка одобрена\n\n"
+                f"ФИО: {fio}\n"
+                f"Табель №: {tab_number}\n"
                 f"Заявка: {task_name}"
             )
             break
 
-        # Отклонено / Запрошены изменения
+        # --- Отклонено / Запрос изменений ---
         if approval_status in ["rejected", "changes_requested"]:
-            # Берём последний комментарий как причину
             stories = requests.get(
                 f"https://app.asana.com/api/1.0/tasks/{task_gid}/stories",
                 headers=headers
@@ -90,6 +105,8 @@ def asana_webhook():
 
             send_message(
                 f"❌ Заявка отклонена\n\n"
+                f"ФИО: {fio}\n"
+                f"Табель №: {tab_number}\n"
                 f"Заявка: {task_name}\n"
                 f"Причина: {reason}"
             )
@@ -100,5 +117,6 @@ def asana_webhook():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
