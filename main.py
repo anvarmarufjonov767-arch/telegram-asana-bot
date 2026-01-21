@@ -10,6 +10,7 @@ ASANA_TOKEN = os.environ.get("ASANA_TOKEN")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 ADMIN_CHAT_ID = 927536383  # твой chat_id
 
+
 def send_message(text):
     requests.post(
         f"{TELEGRAM_API}/sendMessage",
@@ -19,13 +20,16 @@ def send_message(text):
         }
     )
 
+
 @app.route("/", methods=["GET"])
 def index():
     return "Bot is running"
 
+
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
     return "ok"
+
 
 @app.route("/asana", methods=["POST"])
 def asana_webhook():
@@ -53,7 +57,7 @@ def asana_webhook():
             "Authorization": f"Bearer {ASANA_TOKEN}"
         }
 
-        # Получаем задачу целиком
+        # Получаем данные задачи
         task_response = requests.get(
             f"https://app.asana.com/api/1.0/tasks/{task_gid}",
             headers=headers,
@@ -67,32 +71,27 @@ def asana_webhook():
         approval_status = task_data.get("approval_status")
         notes = task_data.get("notes", "")
 
-        # --- ФИО из описания ---
-fio = "не указано"
-lines = [l.strip() for l in notes.splitlines() if l.strip()]
+        # ---------- ФИО из описания ----------
+        fio = "не указано"
+        lines = [l.strip() for l in notes.splitlines() if l.strip()]
 
-for i, line in enumerate(lines):
-    # Вариант: ФИО: Анвар Маруфжонов
-    if line.startswith("ФИО"):
-        parts = line.split(":", 1)
-        if len(parts) > 1 and parts[1].strip():
-            fio = parts[1].strip()
-            break
-        # Вариант:
-        # ФИО:
-        # Анвар Маруфжонов
-        elif i + 1 < len(lines):
-            fio = lines[i + 1]
-            break
+        for i, line in enumerate(lines):
+            if line.startswith("ФИО"):
+                parts = line.split(":", 1)
+                if len(parts) > 1 and parts[1].strip():
+                    fio = parts[1].strip()
+                    break
+                elif i + 1 < len(lines):
+                    fio = lines[i + 1]
+                    break
 
-
-        # --- Табель № из кастомного поля ---
+        # ---------- Табель № из кастомного поля ----------
         tab_number = "не указан"
         for field in task_data.get("custom_fields", []):
             if field.get("name") == "Табель №":
                 tab_number = field.get("display_value") or tab_number
 
-        # --- Одобрено ---
+        # ---------- Одобрено ----------
         if approval_status == "approved":
             send_message(
                 f"✅ Заявка одобрена\n\n"
@@ -102,7 +101,7 @@ for i, line in enumerate(lines):
             )
             break
 
-        # --- Отклонено / Запрос изменений ---
+        # ---------- Отклонено / Запрос изменений ----------
         if approval_status in ["rejected", "changes_requested"]:
             stories = requests.get(
                 f"https://app.asana.com/api/1.0/tasks/{task_gid}/stories",
@@ -125,6 +124,7 @@ for i, line in enumerate(lines):
             break
 
     return "ok"
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
