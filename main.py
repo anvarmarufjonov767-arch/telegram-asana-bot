@@ -4,19 +4,19 @@ import os
 
 app = Flask(__name__)
 
-# ========= ENV =========
+# ========== ENV ==========
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ASANA_TOKEN = os.environ.get("ASANA_TOKEN")
 ASANA_PROJECT_ID = os.environ.get("ASANA_PROJECT_ID")
+ASANA_ASSIGNEE_ID = os.environ.get("ASANA_ASSIGNEE_ID")
 
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
-ADMIN_CHAT_ID = 927536383
 
-# ========= STATE =========
+# ========== STATE ==========
 user_states = {}
 user_data = {}
 
-# ========= HELPERS =========
+# ========== HELPERS ==========
 def send_message(chat_id, text, keyboard=None):
     payload = {"chat_id": chat_id, "text": text}
     if keyboard:
@@ -25,67 +25,76 @@ def send_message(chat_id, text, keyboard=None):
 
 
 def download_file(file_id):
-    file_path = requests.get(
+    file_info = requests.get(
         f"{TELEGRAM_API}/getFile",
-        params={"file_id": file_id}
-    ).json()["result"]["file_path"]
+        params={"file_id": file_id},
+        timeout=10
+    ).json()
 
+    file_path = file_info["result"]["file_path"]
     file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
-    return requests.get(file_url).content
+    return requests.get(file_url, timeout=20).content
 
 
-def create_task_with_attachments(fio, tab, tg_id, photos):
+def create_asana_task(fio, tab, telegram_id, photos):
     headers = {
         "Authorization": f"Bearer {ASANA_TOKEN}"
     }
 
-    # Получаем custom field ids
-    fields = requests.get(
+    # Получаем кастомные поля проекта
+    fields_resp = requests.get(
         f"https://app.asana.com/api/1.0/projects/{ASANA_PROJECT_ID}/custom_field_settings",
-        headers=headers
-    ).json()["data"]
+        headers=headers,
+        timeout=10
+    ).json()
 
     custom_fields = {}
-    for f in fields:
-        if f["custom_field"]["name"] == "Табель №":
-            custom_fields[f["custom_field"]["gid"]] = tab
-        if f["custom_field"]["name"] == "Telegram ID":
-            custom_fields[f["custom_field"]["gid"]] = str(tg_id)
+    for item in fields_resp.get("data", []):
+        field = item["custom_field"]
+        if field["name"] == "Табель №":
+            custom_fields[field["gid"]] = tab
+        if field["name"] == "Telegram ID":
+            custom_fields[field["gid"]] = str(telegram_id)
 
-    task = requests.post(
+    # Создаём APPROVAL-задачу с исполнителем
+    task_resp = requests.post(
         "https://app.asana.com/api/1.0/tasks",
-        headers=headers,
+        headers={**headers, "Content-Type": "application/json"},
         json={
             "data": {
                 "name": "Заявка на фото-контроль",
                 "notes": f"ФИО:\n{fio}",
                 "projects": [ASANA_PROJECT_ID],
+                "assignee": ASANA_ASSIGNEE_ID,
+                "resource_subtype": "approval",
                 "approval_status": "pending",
                 "custom_fields": custom_fields
             }
-        }
-    ).json()["data"]
+        },
+        timeout=10
+    ).json()
+
+    task_gid = task_resp["data"]["gid"]
 
     # Загружаем фото
     for photo in photos:
         requests.post(
-            f"https://app.asana.com/api/1.0/tasks/{task['gid']}/attachments",
+            f"https://app.asana.com/api/1.0/tasks/{task_gid}/attachments",
             headers=headers,
-            files={"file": photo}
+            files={"file": photo},
+            timeout=20
         )
 
-    return True
 
-
-# ========= TELEGRAM =========
+# ========== TELEGRAM WEBHOOK ==========
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
     data = request.json or {}
 
-    # Сообщения
+    # -------- Сообщения --------
     if "message" in data:
         chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
+        text = data["message"].get("text", "").strip()
 
         # START
         if text == "/start":
@@ -107,38 +116,49 @@ def telegram_webhook():
             return "ok"
 
         # Фото
-        if "photo" in data["message"]:
+        if "photo" in data["message"] and user_states.get(chat_id) == "WAIT_PHOTO":
             file_id = data["message"]["photo"][-1]["file_id"]
             user_data[chat_id]["photos"].append(download_file(file_id))
+
             send_message(
                 chat_id,
                 "Фото получено. Отправьте ещё или нажмите «Готово»",
                 keyboard={
-                    "inline_keyboard": [[{"text": "✅ Готово", "callback_data": "DONE"}]]
+                    "inline_keyboard": [
+                        [{"text": "✅ Готово", "callback_data": "DONE"}]
+                    ]
                 }
             )
             return "ok"
 
-    # Callback
+    # -------- Callback --------
     if "callback_query" in data:
         chat_id = data["callback_query"]["from"]["id"]
-        if data["callback_query"]["data"] == "DONE":
+        action = data["callback_query"]["data"]
+
+        if action == "DONE":
             d = user_data.get(chat_id)
-            create_task_with_attachments(
-                d["fio"], d["tab"], chat_id, d["photos"]
+
+            if not d or not d.get("photos"):
+                send_message(chat_id, "❗ Нужно отправить хотя бы одно фото")
+                return "ok"
+
+            create_asana_task(
+                fio=d["fio"],
+                tab=d["tab"],
+                telegram_id=chat_id,
+                photos=d["photos"]
             )
+
             send_message(chat_id, "📨 Заявка отправлена на проверку")
-            send_message(
-                ADMIN_CHAT_ID,
-                f"🆕 Новая заявка с фото\nФИО: {d['fio']}\nТабель №: {d['tab']}"
-            )
+
             user_states.pop(chat_id, None)
             user_data.pop(chat_id, None)
 
     return "ok"
 
 
-# ========= RUN =========
+# ========== RUN ==========
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
