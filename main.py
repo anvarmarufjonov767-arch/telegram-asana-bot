@@ -190,11 +190,13 @@ def asana_webhook():
             )
             break
 
-        # ----- REJECTED -----
+        # ----- REJECTED / CHANGES -----
         if approval_status in ["rejected", "changes_requested"]:
             reason = get_last_comment(task_gid, headers)
             text = (
                 "❌ Ваша заявка отклонена\n\n"
+                f"ФИО: {fio}\n"
+                f"Табель №: {tab_number}\n"
                 f"Причина: {reason}"
             )
 
