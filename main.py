@@ -17,12 +17,12 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 user_states = {}
 user_data = {}
 
+# 🔐 анти-дубли уведомлений
+sent_notifications = set()
+
 # ========= HELPERS =========
 def send_message(chat_id, text, keyboard=None):
-    payload = {
-        "chat_id": chat_id,
-        "text": text
-    }
+    payload = {"chat_id": chat_id, "text": text}
     if keyboard:
         payload["reply_markup"] = keyboard
 
@@ -65,14 +65,14 @@ def create_asana_task(fio, tab, telegram_id, photos):
     headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 
     # --- custom fields ---
-    fields_resp = requests.get(
+    fields = requests.get(
         f"https://app.asana.com/api/1.0/projects/{ASANA_PROJECT_ID}/custom_field_settings",
         headers=headers,
         timeout=10
     ).json()["data"]
 
     custom_fields = {}
-    for item in fields_resp:
+    for item in fields:
         f = item["custom_field"]
         if f["name"] == "Табель №":
             custom_fields[f["gid"]] = tab
@@ -180,7 +180,6 @@ def asana_webhook():
 
     data = request.json or {}
     events = data.get("events", [])
-
     headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 
     for e in events:
@@ -188,7 +187,7 @@ def asana_webhook():
         if not task_gid:
             continue
 
-        # ⏱ даём Asana обновить approval
+        # даём Asana обновить статус
         time.sleep(1)
 
         task_resp = requests.get(
@@ -209,12 +208,21 @@ def asana_webhook():
         task = task_resp.json()["data"]
         approval = task.get("approval_status")
 
+        if approval == "pending":
+            continue
+
+        # 🔐 анти-дубликат
+        dedup_key = f"{task_gid}:{approval}"
+        if dedup_key in sent_notifications:
+            continue
+        sent_notifications.add(dedup_key)
+
         courier_tg = None
         for f in task.get("custom_fields", []):
             if f["name"] == "Telegram ID" and f.get("display_value"):
                 courier_tg = int(f["display_value"])
 
-        if not courier_tg or approval == "pending":
+        if not courier_tg:
             continue
 
         task_name = task.get("name", "Заявка")
