@@ -5,14 +5,18 @@ import os
 app = Flask(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+ASANA_TOKEN = os.environ.get("ASANA_TOKEN")
 
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 ADMIN_CHAT_ID = 927536383  # твой chat_id
 
 def send_message(text):
     requests.post(
         f"{TELEGRAM_API}/sendMessage",
-        json={"chat_id": ADMIN_CHAT_ID, "text": text}
+        json={
+            "chat_id": ADMIN_CHAT_ID,
+            "text": text
+        }
     )
 
 @app.route("/", methods=["GET"])
@@ -25,14 +29,14 @@ def telegram_webhook():
 
 @app.route("/asana", methods=["POST"])
 def asana_webhook():
-    # Подтверждение webhook
+    # Подтверждение webhook Asana
     hook_secret = request.headers.get("X-Hook-Secret")
     if hook_secret:
         response = make_response("")
         response.headers["X-Hook-Secret"] = hook_secret
         return response
 
-    data = request.json
+    data = request.json or {}
     events = data.get("events", [])
 
     for event in events:
@@ -46,31 +50,39 @@ def asana_webhook():
         if not task_gid:
             continue
 
-        # Запрашиваем полные данные задачи
-        headers = {"Authorization": f"Bearer {os.environ.get('ASANA_TOKEN')}"}
-        task_data = requests.get(
+        headers = {
+            "Authorization": f"Bearer {ASANA_TOKEN}"
+        }
+
+        task_response = requests.get(
             f"https://app.asana.com/api/1.0/tasks/{task_gid}",
             headers=headers,
-            params={"opt_fields": "custom_fields.name,custom_fields.display_value"}
-        ).json()
+            params={
+                "opt_fields": "custom_fields.name,custom_fields.display_value"
+            }
+        )
 
+        task_data = task_response.json()
         fields = task_data.get("data", {}).get("custom_fields", [])
 
         status = None
         reason = None
 
         for field in fields:
-            if field["name"] == "Статус заявки":
-                status = field["display_value"]
-            if field["name"] == "Причина отказа":
-                reason = field["display_value"]
+            if field.get("name") == "Статус заявки":
+                status = field.get("display_value")
+            if field.get("name") == "Причина отказа":
+                reason = field.get("display_value")
 
-       send_message(
-    f"DEBUG\n\n"
-    f"Название: {task_name}\n"
-    f"Статус: {status}\n"
-    f"Причина: {reason}"
-)
+        # DEBUG-сообщение
+        send_message(
+            f"DEBUG\n\n"
+            f"Название: {task_name}\n"
+            f"Статус: {status}\n"
+            f"Причина: {reason}"
+        )
+
+        break  # одно уведомление на один webhook
 
     return "ok"
 
