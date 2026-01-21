@@ -68,11 +68,23 @@ def asana_webhook():
         notes = task_data.get("notes", "")
 
         # --- ФИО из описания ---
-        fio = "не указано"
-        for line in notes.splitlines():
-            if "ФИО" in line:
-                fio = line.split(":", 1)[-1].strip()
-                break
+fio = "не указано"
+lines = [l.strip() for l in notes.splitlines() if l.strip()]
+
+for i, line in enumerate(lines):
+    # Вариант: ФИО: Анвар Маруфжонов
+    if line.startswith("ФИО"):
+        parts = line.split(":", 1)
+        if len(parts) > 1 and parts[1].strip():
+            fio = parts[1].strip()
+            break
+        # Вариант:
+        # ФИО:
+        # Анвар Маруфжонов
+        elif i + 1 < len(lines):
+            fio = lines[i + 1]
+            break
+
 
         # --- Табель № из кастомного поля ---
         tab_number = "не указан"
