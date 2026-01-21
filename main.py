@@ -54,39 +54,51 @@ def asana_webhook():
             "Authorization": f"Bearer {ASANA_TOKEN}"
         }
 
+        # Получаем детали задачи + approval
         task_response = requests.get(
             f"https://app.asana.com/api/1.0/tasks/{task_gid}",
             headers=headers,
             params={
-                "opt_fields": "custom_fields.name,custom_fields.display_value"
+                "opt_fields": "approval_status,name"
             }
-        )
+        ).json()
 
-        task_data = task_response.json()
-        fields = task_data.get("data", {}).get("custom_fields", [])
+        task_data = task_response.get("data", {})
+        approval_status = task_data.get("approval_status")
 
-        status = None
-        reason = None
+        # Одобрено
+        if approval_status == "approved":
+            send_message(
+                f"✅ Заявка одобрена\n\n"
+                f"Заявка: {task_name}"
+            )
+            break
 
-        for field in fields:
-            if field.get("name") == "Статус заявки":
-                status = field.get("display_value")
-            if field.get("name") == "Причина отказа":
-                reason = field.get("display_value")
+        # Отклонено / Запрошены изменения
+        if approval_status in ["rejected", "changes_requested"]:
+            # Берём последний комментарий как причину
+            stories = requests.get(
+                f"https://app.asana.com/api/1.0/tasks/{task_gid}/stories",
+                headers=headers
+            ).json()
 
-        # DEBUG-сообщение
-        send_message(
-            f"DEBUG\n\n"
-            f"Название: {task_name}\n"
-            f"Статус: {status}\n"
-            f"Причина: {reason}"
-        )
+            reason = "не указана"
+            for story in reversed(stories.get("data", [])):
+                if story.get("type") == "comment":
+                    reason = story.get("text")
+                    break
 
-        break  # одно уведомление на один webhook
+            send_message(
+                f"❌ Заявка отклонена\n\n"
+                f"Заявка: {task_name}\n"
+                f"Причина: {reason}"
+            )
+            break
 
     return "ok"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
