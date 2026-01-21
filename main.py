@@ -1,6 +1,7 @@
 from flask import Flask, request, make_response
 import requests
 import os
+import time
 
 app = Flask(__name__)
 
@@ -12,23 +13,24 @@ ASANA_ASSIGNEE_ID = os.environ.get("ASANA_ASSIGNEE_ID")
 
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# ========= STATE (in-memory) =========
+# ========= STATE =========
 user_states = {}
 user_data = {}
 
 # ========= HELPERS =========
 def send_message(chat_id, text, keyboard=None):
-    payload = {"chat_id": chat_id, "text": text}
+    payload = {
+        "chat_id": chat_id,
+        "text": text
+    }
     if keyboard:
         payload["reply_markup"] = keyboard
-    try:
-        requests.post(
-            f"{TELEGRAM_API}/sendMessage",
-            json=payload,
-            timeout=10
-        )
-    except Exception as e:
-        print("Telegram send error:", e)
+
+    requests.post(
+        f"{TELEGRAM_API}/sendMessage",
+        json=payload,
+        timeout=10
+    )
 
 
 def download_file(file_id):
@@ -44,41 +46,40 @@ def download_file(file_id):
 
 
 def get_last_comment(task_gid):
-    try:
-        resp = requests.get(
-            f"https://app.asana.com/api/1.0/tasks/{task_gid}/stories",
-            headers={"Authorization": f"Bearer {ASANA_TOKEN}"},
-            timeout=10
-        ).json()
-
-        for story in reversed(resp.get("data", [])):
-            if story.get("type") == "comment":
-                return story.get("text")
-    except Exception as e:
-        print("Asana comment error:", e)
-
-    return "не указана"
-
-
-def create_asana_task(fio, tab, telegram_id, photos):
     headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
-
-    # --- получаем custom fields проекта ---
-    fields_resp = requests.get(
-        f"https://app.asana.com/api/1.0/projects/{ASANA_PROJECT_ID}/custom_field_settings",
+    r = requests.get(
+        f"https://app.asana.com/api/1.0/tasks/{task_gid}/stories",
         headers=headers,
         timeout=10
     ).json()
 
+    for story in reversed(r.get("data", [])):
+        if story.get("type") == "comment":
+            return story.get("text")
+
+    return "не указана"
+
+
+# ========= ASANA TASK =========
+def create_asana_task(fio, tab, telegram_id, photos):
+    headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
+
+    # --- custom fields ---
+    fields_resp = requests.get(
+        f"https://app.asana.com/api/1.0/projects/{ASANA_PROJECT_ID}/custom_field_settings",
+        headers=headers,
+        timeout=10
+    ).json()["data"]
+
     custom_fields = {}
-    for item in fields_resp.get("data", []):
+    for item in fields_resp:
         f = item["custom_field"]
         if f["name"] == "Табель №":
             custom_fields[f["gid"]] = tab
         if f["name"] == "Telegram ID":
             custom_fields[f["gid"]] = str(telegram_id)
 
-    # --- создаём approval-задачу ---
+    # --- create task ---
     task = requests.post(
         "https://app.asana.com/api/1.0/tasks",
         headers={**headers, "Content-Type": "application/json"},
@@ -96,7 +97,7 @@ def create_asana_task(fio, tab, telegram_id, photos):
         timeout=10
     ).json()["data"]
 
-    # --- прикрепляем фото ---
+    # --- attach photos ---
     for photo in photos:
         requests.post(
             f"https://app.asana.com/api/1.0/tasks/{task['gid']}/attachments",
@@ -136,6 +137,7 @@ def telegram_webhook():
         if "photo" in data["message"] and user_states.get(chat_id) == "WAIT_PHOTO":
             file_id = data["message"]["photo"][-1]["file_id"]
             user_data[chat_id]["photos"].append(download_file(file_id))
+
             send_message(
                 chat_id,
                 "Фото получено. Отправьте ещё или нажмите «Готово»",
@@ -149,9 +151,11 @@ def telegram_webhook():
 
     if "callback_query" in data:
         chat_id = data["callback_query"]["from"]["id"]
+
         if data["callback_query"]["data"] == "DONE":
             d = user_data.get(chat_id)
-            if not d or not d.get("photos"):
+
+            if not d or not d["photos"]:
                 send_message(chat_id, "Нужно хотя бы одно фото")
                 return "ok"
 
@@ -174,61 +178,47 @@ def asana_webhook():
         r.headers["X-Hook-Secret"] = secret
         return r
 
-    payload = request.json or {}
-    events = payload.get("events", [])
-
-    if not events:
-        return "ok"
+    data = request.json or {}
+    events = data.get("events", [])
 
     headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
-
-    print("ASANA EVENTS:", events)
 
     for e in events:
         task_gid = e.get("resource", {}).get("gid")
         if not task_gid:
             continue
 
-        # --- всегда запрашиваем реальное состояние задачи ---
-        try:
-            task_resp = requests.get(
-                f"https://app.asana.com/api/1.0/tasks/{task_gid}",
-                headers=headers,
-                params={
-                    "opt_fields": (
-                        "name,"
-                        "approval_status,"
-                        "custom_fields.name,"
-                        "custom_fields.display_value"
-                    )
-                },
-                timeout=10
-            )
-        except Exception as ex:
-            print("Asana task fetch error:", ex)
-            continue
+        # ⏱ даём Asana обновить approval
+        time.sleep(1)
+
+        task_resp = requests.get(
+            f"https://app.asana.com/api/1.0/tasks/{task_gid}",
+            headers=headers,
+            params={
+                "opt_fields": (
+                    "name,approval_status,"
+                    "custom_fields.name,custom_fields.display_value"
+                )
+            },
+            timeout=10
+        )
 
         if task_resp.status_code != 200:
             continue
 
-        task = task_resp.json().get("data", {})
+        task = task_resp.json()["data"]
         approval = task.get("approval_status")
-        task_name = task.get("name", "Заявка")
 
-        # --- получаем Telegram ID ---
         courier_tg = None
         for f in task.get("custom_fields", []):
-            if f.get("name") == "Telegram ID" and f.get("display_value"):
-                try:
-                    courier_tg = int(f["display_value"])
-                except ValueError:
-                    pass
+            if f["name"] == "Telegram ID" and f.get("display_value"):
+                courier_tg = int(f["display_value"])
 
-        if not courier_tg:
-            print("Telegram ID not found for task", task_gid)
+        if not courier_tg or approval == "pending":
             continue
 
-        # --- финальные статусы ---
+        task_name = task.get("name", "Заявка")
+
         if approval == "approved":
             send_message(
                 courier_tg,
@@ -239,24 +229,17 @@ def asana_webhook():
             reason = get_last_comment(task_gid)
             send_message(
                 courier_tg,
-                f"❌ Ваша заявка отклонена\n\n"
-                f"Заявка: {task_name}\n"
-                f"Причина: {reason}"
+                f"❌ Ваша заявка отклонена\n\nЗаявка: {task_name}\nПричина: {reason}"
             )
 
     return "ok"
-
-
-# ========= HEALTH =========
-@app.route("/", methods=["GET"])
-def health():
-    return "OK"
 
 
 # ========= RUN =========
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
