@@ -4,6 +4,7 @@ import os
 
 app = Flask(__name__)
 
+# ===== ENV =====
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ASANA_TOKEN = os.environ.get("ASANA_TOKEN")
 
@@ -11,16 +12,68 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 ADMIN_CHAT_ID = 927536383  # твой chat_id
 
 
-def send_message(text):
+# ===== HELPERS =====
+def send_message(text: str):
     requests.post(
         f"{TELEGRAM_API}/sendMessage",
         json={
             "chat_id": ADMIN_CHAT_ID,
             "text": text
-        }
+        },
+        timeout=10
     )
 
 
+def extract_fio(notes: str) -> str:
+    """
+    Надёжно извлекает ФИО из описания задачи Asana.
+    Поддерживает форматы:
+    ФИО:
+    Анвар Маруфжонов
+
+    ФИО: Анвар Маруфжонов
+    FIO:
+    """
+    if not notes:
+        return "не указано"
+
+    lines = [l.strip() for l in notes.splitlines() if l.strip()]
+
+    for i, line in enumerate(lines):
+        key = line.lower().replace(" ", "")
+        if key in ["фио", "фио:", "fio", "fio:"]:
+            if i + 1 < len(lines):
+                return lines[i + 1]
+    return "не указано"
+
+
+def extract_tab_number(custom_fields) -> str:
+    """
+    Извлекает Табель № из кастомного поля
+    """
+    for field in custom_fields or []:
+        if field.get("name") == "Табель №":
+            return field.get("display_value") or "не указан"
+    return "не указан"
+
+
+def get_last_comment(task_gid: str, headers) -> str:
+    """
+    Возвращает последний комментарий задачи
+    """
+    resp = requests.get(
+        f"https://app.asana.com/api/1.0/tasks/{task_gid}/stories",
+        headers=headers,
+        timeout=10
+    ).json()
+
+    for story in reversed(resp.get("data", [])):
+        if story.get("type") == "comment":
+            return story.get("text")
+    return "не указана"
+
+
+# ===== ROUTES =====
 @app.route("/", methods=["GET"])
 def index():
     return "Bot is running"
@@ -43,55 +96,39 @@ def asana_webhook():
     data = request.json or {}
     events = data.get("events", [])
 
+    headers = {
+        "Authorization": f"Bearer {ASANA_TOKEN}"
+    }
+
     for event in events:
         if event.get("action") != "changed":
             continue
 
         task = event.get("resource", {})
         task_gid = task.get("gid")
-
         if not task_gid:
             continue
 
-        headers = {
-            "Authorization": f"Bearer {ASANA_TOKEN}"
-        }
-
-        # Получаем данные задачи
-        task_response = requests.get(
+        # Получаем задачу
+        task_resp = requests.get(
             f"https://app.asana.com/api/1.0/tasks/{task_gid}",
             headers=headers,
             params={
                 "opt_fields": "name,notes,approval_status,custom_fields.name,custom_fields.display_value"
-            }
+            },
+            timeout=10
         ).json()
 
-        task_data = task_response.get("data", {})
+        task_data = task_resp.get("data", {})
         task_name = task_data.get("name", "Заявка")
         approval_status = task_data.get("approval_status")
         notes = task_data.get("notes", "")
+        custom_fields = task_data.get("custom_fields", [])
 
-        # ---------- ФИО из описания ----------
-        fio = "не указано"
-        lines = [l.strip() for l in notes.splitlines() if l.strip()]
+        fio = extract_fio(notes)
+        tab_number = extract_tab_number(custom_fields)
 
-        for i, line in enumerate(lines):
-            if line.startswith("ФИО"):
-                parts = line.split(":", 1)
-                if len(parts) > 1 and parts[1].strip():
-                    fio = parts[1].strip()
-                    break
-                elif i + 1 < len(lines):
-                    fio = lines[i + 1]
-                    break
-
-        # ---------- Табель № из кастомного поля ----------
-        tab_number = "не указан"
-        for field in task_data.get("custom_fields", []):
-            if field.get("name") == "Табель №":
-                tab_number = field.get("display_value") or tab_number
-
-        # ---------- Одобрено ----------
+        # ===== APPROVED =====
         if approval_status == "approved":
             send_message(
                 f"✅ Заявка одобрена\n\n"
@@ -101,18 +138,9 @@ def asana_webhook():
             )
             break
 
-        # ---------- Отклонено / Запрос изменений ----------
+        # ===== REJECTED / CHANGES =====
         if approval_status in ["rejected", "changes_requested"]:
-            stories = requests.get(
-                f"https://app.asana.com/api/1.0/tasks/{task_gid}/stories",
-                headers=headers
-            ).json()
-
-            reason = "не указана"
-            for story in reversed(stories.get("data", [])):
-                if story.get("type") == "comment":
-                    reason = story.get("text")
-                    break
+            reason = get_last_comment(task_gid, headers)
 
             send_message(
                 f"❌ Заявка отклонена\n\n"
@@ -126,9 +154,11 @@ def asana_webhook():
     return "ok"
 
 
+# ===== RUN =====
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
