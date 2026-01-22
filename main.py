@@ -15,23 +15,31 @@ ASANA_ASSIGNEE_ID = os.environ["ASANA_ASSIGNEE_ID"]
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 ASANA_HEADERS = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 
+REQUIRED_PHOTOS = 3
+
 # ========= STATE =========
 user_states = {}
 user_data = {}
-
-# защита от дублей (на время аптайма)
 sent_notifications = set()
 
 # ========= HELPERS =========
-def send_message(chat_id, text):
-    try:
-        requests.post(
-            f"{TELEGRAM_API}/sendMessage",
-            json={"chat_id": chat_id, "text": text},
-            timeout=10
-        )
-    except Exception as e:
-        print("TELEGRAM ERROR:", e)
+def send_message(chat_id, text, keyboard=None):
+    payload = {"chat_id": chat_id, "text": text}
+    if keyboard:
+        payload["reply_markup"] = keyboard
+
+    requests.post(
+        f"{TELEGRAM_API}/sendMessage",
+        json=payload,
+        timeout=10
+    )
+
+
+def kb(buttons):
+    return {
+        "keyboard": [[{"text": b} for b in row] for row in buttons],
+        "resize_keyboard": True
+    }
 
 
 def download_file(file_id):
@@ -60,7 +68,7 @@ def get_last_comment(task_gid):
     return "не указана"
 
 
-# ========= ASANA TASK CREATION =========
+# ========= ASANA TASK =========
 def create_asana_task(fio, tab, telegram_id, photos):
     fields = requests.get(
         f"https://app.asana.com/api/1.0/projects/{ASANA_PROJECT_ID}/custom_field_settings",
@@ -106,54 +114,145 @@ def create_asana_task(fio, tab, telegram_id, photos):
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
     data = request.json or {}
+    if "message" not in data:
+        return "ok"
 
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "").strip()
+    msg = data["message"]
+    chat_id = msg["chat"]["id"]
+    text = msg.get("text", "").strip()
+    photos = msg.get("photo")
 
-        if text == "/start":
+    state = user_states.get(chat_id)
+
+    # START
+    if text == "/start":
+        user_states[chat_id] = "START"
+        user_data[chat_id] = {"photos": []}
+
+        send_message(
+            chat_id,
+            "Фото-контроль брендированного автомобиля\n\n"
+            "Для прохождения проверки выполните следующие шаги:\n"
+            "1. Укажите ФИО\n"
+            "2. Укажите табельный номер\n"
+            "3. Отправьте 3 фотографии автомобиля\n\n"
+            "После проверки вы получите уведомление о результате.",
+            kb([["Начать"]])
+        )
+        return "ok"
+
+    if state == "START" and text == "Начать":
+        user_states[chat_id] = "WAIT_FIO"
+        send_message(
+            chat_id,
+            "Шаг 1 из 3\n\nВведите ФИО полностью\n"
+            "(например: Иванов Иван Иванович)",
+            kb([["Отменить"]])
+        )
+        return "ok"
+
+    if state == "WAIT_FIO":
+        if text == "Отменить":
+            user_states.pop(chat_id, None)
+            user_data.pop(chat_id, None)
+            send_message(chat_id, "Операция отменена.")
+            return "ok"
+
+        user_data[chat_id]["fio"] = text
+        user_states[chat_id] = "WAIT_TAB"
+
+        send_message(
+            chat_id,
+            "Шаг 2 из 3\n\nВведите табельный номер",
+            kb([["Назад"], ["Отменить"]])
+        )
+        return "ok"
+
+    if state == "WAIT_TAB":
+        if text == "Назад":
             user_states[chat_id] = "WAIT_FIO"
-            user_data[chat_id] = {"photos": []}
-            send_message(chat_id, "Введите ФИО")
+            send_message(chat_id, "Введите ФИО полностью")
             return "ok"
 
-        if user_states.get(chat_id) == "WAIT_FIO":
-            user_data[chat_id]["fio"] = text
-            user_states[chat_id] = "WAIT_TAB"
-            send_message(chat_id, "Введите табельный номер")
+        if text == "Отменить":
+            user_states.pop(chat_id, None)
+            user_data.pop(chat_id, None)
+            send_message(chat_id, "Операция отменена.")
             return "ok"
 
-        if user_states.get(chat_id) == "WAIT_TAB":
-            user_data[chat_id]["tab"] = text
-            user_states[chat_id] = "WAIT_PHOTO"
-            send_message(chat_id, "Отправьте фото")
+        user_data[chat_id]["tab"] = text
+        user_states[chat_id] = "WAIT_PHOTO"
+
+        send_message(
+            chat_id,
+            "Шаг 3 из 3\n\n"
+            "Отправьте 3 фотографии автомобиля.\n\n"
+            "Требования:\n"
+            "• автомобиль целиком\n"
+            "• отчётливо виден государственный номер\n"
+            "• отчётливо видна брендировка",
+            kb([["Отменить"]])
+        )
+        return "ok"
+
+    if state == "WAIT_PHOTO":
+        if text == "Отменить":
+            user_states.pop(chat_id, None)
+            user_data.pop(chat_id, None)
+            send_message(chat_id, "Операция отменена.")
             return "ok"
 
-        if "photo" in data["message"] and user_states.get(chat_id) == "WAIT_PHOTO":
-            file_id = data["message"]["photo"][-1]["file_id"]
-            user_data[chat_id]["photos"].append(download_file(file_id))
-            send_message(chat_id, "Фото получено. Отправьте ещё или напишите «Готово»")
-            return "ok"
-
-        if text.lower() == "готово" and user_states.get(chat_id) == "WAIT_PHOTO":
-            d = user_data.get(chat_id)
-
-            if not d["photos"]:
-                send_message(chat_id, "Нужно хотя бы одно фото")
+        if photos:
+            if len(user_data[chat_id]["photos"]) >= REQUIRED_PHOTOS:
+                send_message(chat_id, "Дополнительные фотографии не требуются.")
                 return "ok"
 
+            file_id = photos[-1]["file_id"]
+            user_data[chat_id]["photos"].append(download_file(file_id))
+            count = len(user_data[chat_id]["photos"])
+
+            if count < REQUIRED_PHOTOS:
+                send_message(
+                    chat_id,
+                    f"Фотография получена.\n\n"
+                    f"Необходимо отправить ещё {REQUIRED_PHOTOS - count} фотографию(и)."
+                )
+            else:
+                send_message(
+                    chat_id,
+                    "Все необходимые фотографии получены.",
+                    kb([["Завершить"], ["Отменить"]])
+                )
+            return "ok"
+
+        if text == "Завершить":
+            if len(user_data[chat_id]["photos"]) != REQUIRED_PHOTOS:
+                send_message(
+                    chat_id,
+                    "Для завершения необходимо отправить ровно 3 фотографии."
+                )
+                return "ok"
+
+            d = user_data[chat_id]
             create_asana_task(d["fio"], d["tab"], chat_id, d["photos"])
-            send_message(chat_id, "Заявка отправлена на проверку")
+
+            send_message(
+                chat_id,
+                "Заявка на фото-контроль принята.\n\n"
+                "Материалы переданы на проверку.\n"
+                "Результат будет направлен в данном чате."
+            )
 
             user_states.pop(chat_id, None)
             user_data.pop(chat_id, None)
+            return "ok"
 
     return "ok"
 
 
-# ========= ASANA PROCESSING (RETRY + GUARANTEE) =========
+# ========= ASANA PROCESS =========
 def process_task(task_gid):
-    for _ in range(6):  # ~12 секунд
+    for _ in range(6):
         time.sleep(2)
 
         r = requests.get(
@@ -196,12 +295,12 @@ def process_task(task_gid):
         task_name = task.get("name", "Заявка")
 
         if approval == "approved":
-            send_message(courier_tg, f"✅ Ваша заявка одобрена\n\n{task_name}")
+            send_message(courier_tg, f"Фото-контроль пройден.\n\n{task_name}")
         else:
             reason = get_last_comment(task_gid)
             send_message(
                 courier_tg,
-                f"❌ Ваша заявка отклонена\n\n{task_name}\nПричина: {reason}"
+                f"Фото-контроль не пройден.\n\nПричина:\n{reason}"
             )
         return
 
@@ -209,18 +308,15 @@ def process_task(task_gid):
 # ========= ASANA WEBHOOK =========
 @app.route("/asana", methods=["GET", "POST"])
 def asana_webhook():
-    # handshake от Asana
     secret = request.headers.get("X-Hook-Secret")
     if secret:
         r = make_response("")
         r.headers["X-Hook-Secret"] = secret
         return r
 
-    # GET от UptimeRobot / браузера
     if request.method == "GET":
         return "ok"
 
-    # POST от Asana
     data = request.json or {}
     events = data.get("events", [])
 
@@ -236,7 +332,6 @@ def asana_webhook():
     return "ok"
 
 
-# ========= ROOT (КОСМЕТИКА) =========
 @app.route("/")
 def index():
     return "OK"
