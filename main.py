@@ -43,11 +43,15 @@ TEXTS = {
             "• номер виден\n"
             "• брендировка видна"
         ),
-        "photo_left": "📸 Фото принято. Осталось: {n}",
-        "photo_done": "📸 Все фото получены.",
+        "photo_left": "📸 Фото получены. Осталось: {n}",
+        "photo_done": "📸 Все фотографии получены.",
         "submitted": (
             "⏳ Заявка принята\n"
             "Материалы переданы на проверку."
+        ),
+        "wait_result": (
+            "⏳ Ваша заявка находится на проверке.\n\n"
+            "Пожалуйста, ожидайте результат."
         ),
         "approved": (
             "✅ Фото-контроль пройден\n\n"
@@ -58,7 +62,7 @@ TEXTS = {
             "Причина:\n{reason}"
         ),
         "need_photos": "Необходимо отправить ровно 3 фото.",
-        "cancel": "❌ Операция отменена.",
+        "default_reject": "Причина не указана проверяющим.",
         "buttons": {
             "start": "▶️ Начать",
             "cancel": "❌ Отменить",
@@ -84,10 +88,14 @@ TEXTS = {
         "photo_left": "📸 Qabul qilindi. Qolgan: {n}",
         "photo_done": "📸 Barcha fotosuratlar qabul qilindi.",
         "submitted": "⏳ Ariza qabul qilindi.",
+        "wait_result": (
+            "⏳ Arizangiz tekshiruvda.\n\n"
+            "Iltimos, natijani kuting."
+        ),
         "approved": "✅ Foto-nazoratdan o‘tildi.",
         "rejected": "❌ O‘tilmadi.\nSabab:\n{reason}",
         "need_photos": "3 ta fotosurat kerak.",
-        "cancel": "❌ Bekor qilindi.",
+        "default_reject": "Rad etish sababi ko‘rsatilmagan.",
         "buttons": {
             "start": "▶️ Boshlash",
             "cancel": "❌ Bekor qilish",
@@ -120,7 +128,6 @@ def download_file(file_id):
 def create_asana_task(fio, tab, tg_id, photos, lang):
     notes = f"ФИО:\n{fio}\n\nLANG:{lang}"
 
-    # получаем кастомные поля проекта
     fields = requests.get(
         f"https://app.asana.com/api/1.0/projects/{ASANA_PROJECT_ID}/custom_field_settings",
         headers=ASANA_HEADERS,
@@ -176,7 +183,7 @@ def get_task_lang_and_comment(task_gid):
         if s.get("type") == "comment":
             return lang, s.get("text")
 
-    return lang, "-"
+    return lang, TEXTS[lang]["default_reject"]
 
 # ================= TELEGRAM =================
 @app.route("/webhook", methods=["POST"])
@@ -203,6 +210,10 @@ def telegram():
 
     lang = user_data[cid]["lang"]
     btn = TEXTS[lang]["buttons"]
+
+    if state == "WAIT_RESULT":
+        send(cid, TEXTS[lang]["wait_result"])
+        return "ok"
 
     if state == "READY" and txt == btn["start"]:
         user_states[cid] = "WAIT_FIO"
@@ -234,13 +245,19 @@ def telegram():
             return "ok"
 
         if photos:
-            if len(user_data[cid]["photos"]) < REQUIRED_PHOTOS:
-                user_data[cid]["photos"].append(download_file(photos[-1]["file_id"]))
-                left = REQUIRED_PHOTOS - len(user_data[cid]["photos"])
-                if left > 0:
-                    send(cid, TEXTS[lang]["photo_left"].format(n=left))
-                else:
-                    send(cid, TEXTS[lang]["photo_done"], kb([btn["finish"]]))
+            current = len(user_data[cid]["photos"])
+            to_add = min(len(photos), REQUIRED_PHOTOS - current)
+
+            for i in range(to_add):
+                user_data[cid]["photos"].append(download_file(photos[i]["file_id"]))
+
+            total = len(user_data[cid]["photos"])
+            left = REQUIRED_PHOTOS - total
+
+            if left > 0:
+                send(cid, TEXTS[lang]["photo_left"].format(n=left))
+            else:
+                send(cid, TEXTS[lang]["photo_done"], kb([btn["finish"]]))
             return "ok"
 
         if txt == btn["finish"]:
@@ -255,7 +272,7 @@ def telegram():
                 lang
             )
             send(cid, TEXTS[lang]["submitted"])
-            reset_to_start(cid, lang)
+            user_states[cid] = "WAIT_RESULT"
             return "ok"
 
     return "ok"
@@ -310,6 +327,7 @@ def process_task(task_gid):
         for f in task["custom_fields"]:
             if f["name"] == "Telegram ID":
                 send(int(f["display_value"]), text)
+                reset_to_start(int(f["display_value"]), lang)
         return
 
 @app.route("/")
@@ -318,6 +336,7 @@ def root():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
 
 
 
