@@ -2,6 +2,7 @@ from flask import Flask, request, make_response
 import requests
 import os
 import time
+import threading
 
 app = Flask(__name__)
 
@@ -17,19 +18,20 @@ ASANA_HEADERS = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 # ========= STATE =========
 user_states = {}
 user_data = {}
-sent_notifications = set()  # анти-дубли в рамках аптайма
+
+# анти-дубли (на аптайм)
+sent_notifications = set()
 
 # ========= HELPERS =========
-def send_message(chat_id, text, keyboard=None):
-    payload = {"chat_id": chat_id, "text": text}
-    if keyboard:
-        payload["reply_markup"] = keyboard
-
-    requests.post(
-        f"{TELEGRAM_API}/sendMessage",
-        json=payload,
-        timeout=10
-    )
+def send_message(chat_id, text):
+    try:
+        requests.post(
+            f"{TELEGRAM_API}/sendMessage",
+            json={"chat_id": chat_id, "text": text},
+            timeout=10
+        )
+    except Exception as e:
+        print("TELEGRAM ERROR:", e)
 
 
 def download_file(file_id):
@@ -130,25 +132,12 @@ def telegram_webhook():
         if "photo" in data["message"] and user_states.get(chat_id) == "WAIT_PHOTO":
             file_id = data["message"]["photo"][-1]["file_id"]
             user_data[chat_id]["photos"].append(download_file(file_id))
-
-            send_message(
-                chat_id,
-                "Фото получено. Отправьте ещё или нажмите «Готово»",
-                keyboard={
-                    "inline_keyboard": [
-                        [{"text": "✅ Готово", "callback_data": "DONE"}]
-                    ]
-                }
-            )
+            send_message(chat_id, "Фото получено. Отправьте ещё или напишите «Готово»")
             return "ok"
 
-    if "callback_query" in data:
-        chat_id = data["callback_query"]["from"]["id"]
-
-        if data["callback_query"]["data"] == "DONE":
+        if text.lower() == "готово" and user_states.get(chat_id) == "WAIT_PHOTO":
             d = user_data.get(chat_id)
-
-            if not d or not d["photos"]:
+            if not d["photos"]:
                 send_message(chat_id, "Нужно хотя бы одно фото")
                 return "ok"
 
@@ -161,29 +150,19 @@ def telegram_webhook():
     return "ok"
 
 
-# ========= ASANA WEBHOOK (HANDSHAKE + LOGIC) =========
-@app.route("/asana", methods=["GET", "POST"])
-def asana_webhook():
-    # --- handshake (ОБЯЗАТЕЛЬНО БЫСТРО) ---
-    secret = request.headers.get("X-Hook-Secret")
-    if secret:
-        r = make_response("")
-        r.headers["X-Hook-Secret"] = secret
-        return r
+# ========= ASANA LOGIC (RETRY + GUARANTEE) =========
+def process_task(task_gid):
+    """
+    Отдельный поток:
+    - ждёт обновление approval
+    - делает ретраи
+    - гарантирует доставку
+    """
 
-    data = request.json or {}
-    print("ASANA WEBHOOK RAW:", data)
+    for attempt in range(6):  # до ~12 секунд
+        time.sleep(2)
 
-    events = data.get("events", [])
-
-    for e in events:
-        task_gid = e.get("resource", {}).get("gid")
-        if not task_gid:
-            continue
-
-        time.sleep(3)  # даём Asana обновить approval_status
-
-        task_resp = requests.get(
+        r = requests.get(
             f"https://app.asana.com/api/1.0/tasks/{task_gid}",
             headers=ASANA_HEADERS,
             params={
@@ -195,10 +174,10 @@ def asana_webhook():
             timeout=10
         )
 
-        if task_resp.status_code != 200:
+        if r.status_code != 200:
             continue
 
-        task = task_resp.json()["data"]
+        task = r.json()["data"]
         approval = task.get("approval_status")
 
         if approval == "pending":
@@ -206,7 +185,7 @@ def asana_webhook():
 
         dedup_key = f"{task_gid}:{approval}"
         if dedup_key in sent_notifications:
-            continue
+            return
         sent_notifications.add(dedup_key)
 
         courier_tg = None
@@ -215,25 +194,41 @@ def asana_webhook():
                 try:
                     courier_tg = int(f["display_value"])
                 except ValueError:
-                    courier_tg = None
+                    pass
 
         if not courier_tg:
-            continue
+            return
 
         task_name = task.get("name", "Заявка")
 
         if approval == "approved":
-            send_message(
-                courier_tg,
-                f"✅ Ваша заявка одобрена\n\nЗаявка: {task_name}"
-            )
-
-        elif approval in ("rejected", "changes_requested"):
+            send_message(courier_tg, f"✅ Ваша заявка одобрена\n\n{task_name}")
+        else:
             reason = get_last_comment(task_gid)
             send_message(
                 courier_tg,
-                f"❌ Ваша заявка отклонена\n\nЗаявка: {task_name}\nПричина: {reason}"
+                f"❌ Ваша заявка отклонена\n\n{task_name}\nПричина: {reason}"
             )
+        return
+
+
+# ========= ASANA WEBHOOK =========
+@app.route("/asana", methods=["GET", "POST"])
+def asana_webhook():
+    # handshake
+    secret = request.headers.get("X-Hook-Secret")
+    if secret:
+        r = make_response("")
+        r.headers["X-Hook-Secret"] = secret
+        return r
+
+    data = request.json or {}
+    events = data.get("events", [])
+
+    for e in events:
+        task_gid = e.get("resource", {}).get("gid")
+        if task_gid:
+            threading.Thread(target=process_task, args=(task_gid,)).start()
 
     return "ok"
 
