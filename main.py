@@ -17,9 +17,7 @@ ASANA_HEADERS = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 # ========= STATE =========
 user_states = {}
 user_data = {}
-
-# анти-дубли (в рамках одного аптайма)
-sent_notifications = set()
+sent_notifications = set()  # анти-дубли в рамках аптайма
 
 # ========= HELPERS =========
 def send_message(chat_id, text, keyboard=None):
@@ -62,7 +60,6 @@ def get_last_comment(task_gid):
 
 # ========= ASANA TASK =========
 def create_asana_task(fio, tab, telegram_id, photos):
-    # --- custom fields ---
     fields = requests.get(
         f"https://app.asana.com/api/1.0/projects/{ASANA_PROJECT_ID}/custom_field_settings",
         headers=ASANA_HEADERS,
@@ -77,7 +74,6 @@ def create_asana_task(fio, tab, telegram_id, photos):
         if f["name"] == "Telegram ID":
             custom_fields[f["gid"]] = str(telegram_id)
 
-    # --- create task ---
     task = requests.post(
         "https://app.asana.com/api/1.0/tasks",
         headers={**ASANA_HEADERS, "Content-Type": "application/json"},
@@ -95,7 +91,6 @@ def create_asana_task(fio, tab, telegram_id, photos):
         timeout=10
     ).json()["data"]
 
-    # --- attach photos ---
     for photo in photos:
         requests.post(
             f"https://app.asana.com/api/1.0/tasks/{task['gid']}/attachments",
@@ -166,10 +161,10 @@ def telegram_webhook():
     return "ok"
 
 
-# ========= ASANA WEBHOOK =========
-@app.route("/asana", methods=["POST"])
+# ========= ASANA WEBHOOK (HANDSHAKE + LOGIC) =========
+@app.route("/asana", methods=["GET", "POST"])
 def asana_webhook():
-    # --- handshake ---
+    # --- handshake (ОБЯЗАТЕЛЬНО БЫСТРО) ---
     secret = request.headers.get("X-Hook-Secret")
     if secret:
         r = make_response("")
@@ -177,6 +172,8 @@ def asana_webhook():
         return r
 
     data = request.json or {}
+    print("ASANA WEBHOOK RAW:", data)
+
     events = data.get("events", [])
 
     for e in events:
@@ -184,8 +181,7 @@ def asana_webhook():
         if not task_gid:
             continue
 
-        # даём Asana обновить статус
-        time.sleep(3)
+        time.sleep(3)  # даём Asana обновить approval_status
 
         task_resp = requests.get(
             f"https://app.asana.com/api/1.0/tasks/{task_gid}",
