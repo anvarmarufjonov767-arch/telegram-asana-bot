@@ -28,11 +28,11 @@ TEXTS = {
         "choose_lang": "Выберите язык / Tilni tanlang",
         "start": (
             "ℹ️ Фото-контроль брендированного автомобиля\n\n"
-            "Для прохождения проверки выполните следующие шаги:\n"
-            "1. Укажите ФИО\n"
-            "2. Укажите табельный номер\n"
-            "3. Отправьте 3 фотографии автомобиля\n\n"
-            "После проверки вы получите уведомление о результате."
+            "Для прохождения проверки:\n"
+            "1️⃣ Укажите ФИО\n"
+            "2️⃣ Укажите табельный номер\n"
+            "3️⃣ Отправьте 3 фотографии автомобиля\n\n"
+            "После проверки вы получите уведомление."
         ),
         "fio": "✍️ Шаг 1 из 3\n\nВведите ФИО полностью",
         "tab": "🔢 Шаг 2 из 3\n\nВведите табельный номер",
@@ -41,15 +41,15 @@ TEXTS = {
             "Отправьте 3 фотографии автомобиля.\n\n"
             "Требования:\n"
             "• автомобиль целиком\n"
-            "• отчётливо виден государственный номер\n"
+            "• отчётливо виден номер\n"
             "• отчётливо видна брендировка"
         ),
-        "photo_left": "📸 Фотография получена.\n\nНеобходимо отправить ещё {n} фотографию(и).",
-        "photo_done": "📸 Все необходимые фотографии получены.",
+        "photo_left": "📸 Фото получено.\n\nОсталось отправить: {n}",
+        "photo_done": "📸 Все фотографии получены.",
         "submitted": (
-            "⏳ Заявка на фото-контроль принята\n\n"
+            "⏳ Заявка принята\n\n"
             "Материалы переданы на проверку.\n"
-            "Результат будет направлен в данном чате."
+            "Результат будет направлен в этом чате."
         ),
         "approved": (
             "✅ Фото-контроль пройден\n\n"
@@ -61,17 +61,22 @@ TEXTS = {
             "Причина:\n{reason}\n\n"
             "Пожалуйста, устраните замечания и отправьте фотографии повторно."
         ),
-        "cancel": "Операция отменена.",
-        "need_photos": "Для завершения необходимо отправить ровно 3 фотографии."
+        "need_photos": "Для завершения необходимо отправить ровно 3 фотографии.",
+        "cancel": "❌ Операция отменена.",
+        "buttons": {
+            "start": "▶️ Начать",
+            "finish": "✅ Завершить",
+            "cancel": "❌ Отменить"
+        }
     },
     "uz": {
         "choose_lang": "Tilni tanlang / Выберите язык",
         "start": (
             "ℹ️ Brendlangan avtomobil uchun foto-nazorat\n\n"
             "Tekshiruvdan o‘tish uchun:\n"
-            "1. F.I.Sh. ni kiriting\n"
-            "2. Tabel raqamini kiriting\n"
-            "3. Avtomobilning 3 ta fotosuratini yuboring\n\n"
+            "1️⃣ F.I.Sh. ni kiriting\n"
+            "2️⃣ Tabel raqamini kiriting\n"
+            "3️⃣ Avtomobilning 3 ta fotosuratini yuboring\n\n"
             "Natija ushbu chat orqali yuboriladi."
         ),
         "fio": "✍️ 1-bosqich (3 dan)\n\nF.I.Sh. ni kiriting",
@@ -84,12 +89,12 @@ TEXTS = {
             "• davlat raqami aniq\n"
             "• brendlash aniq"
         ),
-        "photo_left": "📸 Foto qabul qilindi.\n\nYana {n} ta fotosurat yuboring.",
+        "photo_left": "📸 Foto qabul qilindi.\n\nQolgan: {n}",
         "photo_done": "📸 Barcha fotosuratlar qabul qilindi.",
         "submitted": (
-            "⏳ Foto-nazorat uchun ariza qabul qilindi\n\n"
+            "⏳ Ariza qabul qilindi\n\n"
             "Materiallar tekshiruvga yuborildi.\n"
-            "Natija ushbu chat orqali yuboriladi."
+            "Natija shu yerda yuboriladi."
         ),
         "approved": (
             "✅ Foto-nazoratdan muvaffaqiyatli o‘tildi\n\n"
@@ -99,31 +104,40 @@ TEXTS = {
         "rejected": (
             "❌ Foto-nazoratdan o‘tilmadi\n\n"
             "Sabab:\n{reason}\n\n"
-            "Iltimos, kamchiliklarni bartaraf etib,\n"
-            "fotosuratlarni qayta yuboring."
+            "Iltimos, kamchiliklarni bartaraf etib, fotosuratlarni qayta yuboring."
         ),
-        "cancel": "Amal bekor qilindi.",
-        "need_photos": "Yakunlash uchun 3 ta fotosurat yuborilishi kerak."
+        "need_photos": "Yakunlash uchun 3 ta fotosurat yuborilishi kerak.",
+        "cancel": "❌ Amal bekor qilindi.",
+        "buttons": {
+            "start": "▶️ Boshlash",
+            "finish": "✅ Yakunlash",
+            "cancel": "❌ Bekor qilish"
+        }
     }
 }
 
 # ========= HELPERS =========
-def kb(rows):
-    return {"keyboard": [[{"text": b} for b in row] for row in rows], "resize_keyboard": True}
+def kb(buttons):
+    return {"keyboard": [[{"text": b}] for b in buttons], "resize_keyboard": True}
 
 
-def send_message(chat_id, text, keyboard=None):
+def remove_kb():
+    return {"remove_keyboard": True}
+
+
+def send(chat_id, text, keyboard=None):
     payload = {"chat_id": chat_id, "text": text}
     if keyboard:
         payload["reply_markup"] = keyboard
     requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)
 
 
-def t(chat_id, key, **kwargs):
+def t(chat_id, key, **kw):
     lang = user_data.get(chat_id, {}).get("lang", "ru")
-    return TEXTS[lang][key].format(**kwargs)
+    return TEXTS[lang][key].format(**kw)
 
 
+# ========= FILE =========
 def download_file(file_id):
     info = requests.get(f"{TELEGRAM_API}/getFile", params={"file_id": file_id}).json()
     path = info["result"]["file_path"]
@@ -131,31 +145,19 @@ def download_file(file_id):
 
 
 # ========= ASANA =========
-def create_asana_task(fio, tab, telegram_id, photos):
-    fields = requests.get(
-        f"https://app.asana.com/api/1.0/projects/{ASANA_PROJECT_ID}/custom_field_settings",
-        headers=ASANA_HEADERS
-    ).json()["data"]
-
-    custom_fields = {}
-    for item in fields:
-        f = item["custom_field"]
-        if f["name"] == "Табель №":
-            custom_fields[f["gid"]] = tab
-        if f["name"] == "Telegram ID":
-            custom_fields[f["gid"]] = str(telegram_id)
+def create_asana_task(fio, tab, tg_id, photos, lang):
+    notes = f"ФИО:\n{fio}\n\nLANG:{lang}"
 
     task = requests.post(
         "https://app.asana.com/api/1.0/tasks",
         headers={**ASANA_HEADERS, "Content-Type": "application/json"},
         json={"data": {
             "name": "Заявка на фото-контроль",
-            "notes": f"ФИО:\n{fio}",
+            "notes": notes,
             "projects": [ASANA_PROJECT_ID],
             "assignee": ASANA_ASSIGNEE_ID,
             "resource_subtype": "approval",
-            "approval_status": "pending",
-            "custom_fields": custom_fields
+            "approval_status": "pending"
         }}
     ).json()["data"]
 
@@ -167,97 +169,99 @@ def create_asana_task(fio, tab, telegram_id, photos):
         )
 
 
-def get_last_comment(task_gid):
-    r = requests.get(
+def get_task_lang_and_comment(task_gid):
+    task = requests.get(
+        f"https://app.asana.com/api/1.0/tasks/{task_gid}",
+        headers=ASANA_HEADERS,
+        params={"opt_fields": "notes"}
+    ).json()["data"]
+
+    lang = "uz" if "LANG:uz" in task.get("notes", "") else "ru"
+
+    stories = requests.get(
         f"https://app.asana.com/api/1.0/tasks/{task_gid}/stories",
         headers=ASANA_HEADERS
-    ).json()
-    for s in reversed(r.get("data", [])):
+    ).json()["data"]
+
+    for s in reversed(stories):
         if s.get("type") == "comment":
-            return s.get("text")
-    return "-"
+            return lang, s.get("text")
+
+    return lang, "-"
 
 
 # ========= TELEGRAM =========
 @app.route("/webhook", methods=["POST"])
-def telegram_webhook():
-    data = request.json or {}
-    msg = data.get("message")
+def telegram():
+    msg = (request.json or {}).get("message")
     if not msg:
         return "ok"
 
-    chat_id = msg["chat"]["id"]
-    text = msg.get("text", "")
+    cid = msg["chat"]["id"]
+    txt = msg.get("text")
     photos = msg.get("photo")
+    state = user_states.get(cid)
 
-    state = user_states.get(chat_id)
-
-    if text == "/start":
-        user_states[chat_id] = "LANG"
-        user_data[chat_id] = {"photos": []}
-        send_message(chat_id, TEXTS["ru"]["choose_lang"], kb([["Русский 🇷🇺"], ["O‘zbek 🇺🇿"]]))
+    if txt == "/start":
+        user_states[cid] = "LANG"
+        user_data[cid] = {"photos": []}
+        send(cid, TEXTS["ru"]["choose_lang"], kb(["Русский 🇷🇺", "O‘zbek 🇺🇿"]))
         return "ok"
 
     if state == "LANG":
-        user_data[chat_id]["lang"] = "uz" if "O‘zbek" in text else "ru"
-        user_states[chat_id] = "FIO"
-        send_message(chat_id, t(chat_id, "start"), kb([["Начать"]]))
+        user_data[cid]["lang"] = "uz" if "O‘zbek" in txt else "ru"
+        user_states[cid] = "FIO"
+        send(cid, t(cid, "start"), kb([TEXTS[user_data[cid]["lang"]]["buttons"]["start"]]))
         return "ok"
 
-    if text == "Начать" and state == "FIO":
-        send_message(chat_id, t(chat_id, "fio"), kb([["Отменить"]]))
-        user_states[chat_id] = "WAIT_FIO"
+    if state == "FIO" and txt:
+        user_data[cid]["fio"] = txt
+        user_states[cid] = "TAB"
+        send(cid, t(cid, "tab"), kb([TEXTS[user_data[cid]["lang"]]["buttons"]["cancel"]]))
         return "ok"
 
-    if state == "WAIT_FIO":
-        if text == "Отменить":
-            send_message(chat_id, t(chat_id, "cancel"))
-            user_states.pop(chat_id, None)
-            user_data.pop(chat_id, None)
+    if state == "TAB" and txt:
+        if txt.startswith("❌"):
+            send(cid, t(cid, "cancel"), remove_kb())
+            user_states.pop(cid, None)
+            user_data.pop(cid, None)
             return "ok"
-        user_data[chat_id]["fio"] = text
-        user_states[chat_id] = "WAIT_TAB"
-        send_message(chat_id, t(chat_id, "tab"), kb([["Отменить"]]))
+        user_data[cid]["tab"] = txt
+        user_states[cid] = "PHOTO"
+        send(cid, t(cid, "photo"), kb([TEXTS[user_data[cid]["lang"]]["buttons"]["cancel"]]))
         return "ok"
 
-    if state == "WAIT_TAB":
-        if text == "Отменить":
-            send_message(chat_id, t(chat_id, "cancel"))
-            user_states.pop(chat_id, None)
-            user_data.pop(chat_id, None)
-            return "ok"
-        user_data[chat_id]["tab"] = text
-        user_states[chat_id] = "WAIT_PHOTO"
-        send_message(chat_id, t(chat_id, "photo"), kb([["Отменить"]]))
-        return "ok"
-
-    if state == "WAIT_PHOTO":
-        if text == "Отменить":
-            send_message(chat_id, t(chat_id, "cancel"))
-            user_states.pop(chat_id, None)
-            user_data.pop(chat_id, None)
-            return "ok"
-
+    if state == "PHOTO":
         if photos:
-            if len(user_data[chat_id]["photos"]) >= REQUIRED_PHOTOS:
-                return "ok"
-            user_data[chat_id]["photos"].append(download_file(photos[-1]["file_id"]))
-            left = REQUIRED_PHOTOS - len(user_data[chat_id]["photos"])
-            if left > 0:
-                send_message(chat_id, t(chat_id, "photo_left", n=left))
-            else:
-                send_message(chat_id, t(chat_id, "photo_done"), kb([["Завершить"]]))
+            if len(user_data[cid]["photos"]) < REQUIRED_PHOTOS:
+                user_data[cid]["photos"].append(download_file(photos[-1]["file_id"]))
+                left = REQUIRED_PHOTOS - len(user_data[cid]["photos"])
+                if left > 0:
+                    send(cid, t(cid, "photo_left", n=left))
+                else:
+                    send(
+                        cid,
+                        t(cid, "photo_done"),
+                        kb([TEXTS[user_data[cid]["lang"]]["buttons"]["finish"]])
+                    )
             return "ok"
 
-        if text == "Завершить":
-            if len(user_data[chat_id]["photos"]) != REQUIRED_PHOTOS:
-                send_message(chat_id, t(chat_id, "need_photos"))
+        if txt.startswith("✅"):
+            if len(user_data[cid]["photos"]) != REQUIRED_PHOTOS:
+                send(cid, t(cid, "need_photos"))
                 return "ok"
-            d = user_data[chat_id]
-            create_asana_task(d["fio"], d["tab"], chat_id, d["photos"])
-            send_message(chat_id, t(chat_id, "submitted"))
-            user_states.pop(chat_id, None)
-            user_data.pop(chat_id, None)
+
+            d = user_data[cid]
+            create_asana_task(d["fio"], d["tab"], cid, d["photos"], d["lang"])
+            send(cid, t(cid, "submitted"), remove_kb())
+            user_states.pop(cid, None)
+            user_data.pop(cid, None)
+            return "ok"
+
+        if txt.startswith("❌"):
+            send(cid, t(cid, "cancel"), remove_kb())
+            user_states.pop(cid, None)
+            user_data.pop(cid, None)
             return "ok"
 
     return "ok"
@@ -265,7 +269,7 @@ def telegram_webhook():
 
 # ========= ASANA WEBHOOK =========
 @app.route("/asana", methods=["GET", "POST"])
-def asana_webhook():
+def asana():
     secret = request.headers.get("X-Hook-Secret")
     if secret:
         r = make_response("")
@@ -275,8 +279,7 @@ def asana_webhook():
     if request.method == "GET":
         return "ok"
 
-    data = request.json or {}
-    for e in data.get("events", []):
+    for e in (request.json or {}).get("events", []):
         gid = e.get("resource", {}).get("gid")
         if gid:
             threading.Thread(target=process_task, args=(gid,), daemon=True).start()
@@ -289,13 +292,12 @@ def process_task(task_gid):
         r = requests.get(
             f"https://app.asana.com/api/1.0/tasks/{task_gid}",
             headers=ASANA_HEADERS,
-            params={"opt_fields": "approval_status,custom_fields.name,custom_fields.display_value"}
+            params={"opt_fields": "approval_status"}
         )
         if r.status_code != 200:
             continue
 
-        task = r.json()["data"]
-        status = task.get("approval_status")
+        status = r.json()["data"]["approval_status"]
         if status == "pending":
             continue
 
@@ -304,24 +306,24 @@ def process_task(task_gid):
             return
         sent_notifications.add(key)
 
-        tg = None
-        for f in task.get("custom_fields", []):
+        lang, reason = get_task_lang_and_comment(task_gid)
+        msg = TEXTS[lang]["approved"] if status == "approved" else TEXTS[lang]["rejected"].format(reason=reason)
+
+        # telegram id берём из custom field
+        task = requests.get(
+            f"https://app.asana.com/api/1.0/tasks/{task_gid}",
+            headers=ASANA_HEADERS,
+            params={"opt_fields": "custom_fields.name,custom_fields.display_value"}
+        ).json()["data"]
+
+        for f in task["custom_fields"]:
             if f["name"] == "Telegram ID":
-                tg = int(f["display_value"])
-
-        if not tg:
-            return
-
-        if status == "approved":
-            send_message(tg, TEXTS["ru"]["approved"])
-        else:
-            reason = get_last_comment(task_gid)
-            send_message(tg, TEXTS["ru"]["rejected"].format(reason=reason))
+                send(int(f["display_value"]), msg)
         return
 
 
 @app.route("/")
-def index():
+def root():
     return "OK"
 
 
