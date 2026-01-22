@@ -44,7 +44,7 @@ TEXTS = {
             "• номер виден\n"
             "• брендировка видна"
         ),
-        "photo_left": "📸 Фото получены. Осталось: {n}",
+        "photo_left": "📸 Фото получено. Осталось: {n}",
         "photo_done": "📸 Все фотографии получены.",
         "submitted": "⏳ Заявка принята\nМатериалы переданы на проверку.",
         "wait_result": (
@@ -84,26 +84,16 @@ TEXTS = {
         ),
         "fio": "✍️ 1-bosqich\nF.I.Sh. ni kiriting",
         "tab": "🔢 2-bosqich\nTabel raqamini kiriting",
-        "photo": (
-            "📸 3-bosqich\n\n"
-            "Avtomobilning 3 ta fotosuratini yuboring"
-        ),
+        "photo": "📸 3-bosqich\n\n3 ta fotosurat yuboring",
         "photo_left": "📸 Qabul qilindi. Qolgan: {n}",
         "photo_done": "📸 Barcha fotosuratlar qabul qilindi.",
         "submitted": "⏳ Ariza qabul qilindi.",
-        "wait_result": (
-            "⏳ Arizangiz tekshiruvda.\n\n"
-            "Iltimos, natijani kuting."
-        ),
-        "sla_late": (
-            "⏳ Tekshiruv biroz cho‘zildi.\n\n"
-            "Arizangiz hali ham ko‘rib chiqilmoqda.\n"
-            "Natija keyinroq yuboriladi."
-        ),
+        "wait_result": "⏳ Arizangiz tekshiruvda. Iltimos, kuting.",
+        "sla_late": "⏳ Tekshiruv cho‘zildi. Natija keyinroq yuboriladi.",
         "approved": "✅ Foto-nazoratdan o‘tildi.",
         "rejected": "❌ O‘tilmadi.\nSabab:\n{reason}",
-        "need_photos": "3 ta fotosurat kerak.",
-        "default_reject": "Rad etish sababi ko‘rsatilmagan.",
+        "need_photos": "Aniq 3 ta fotosurat kerak.",
+        "default_reject": "Sabab ko‘rsatilmagan.",
         "buttons": {
             "start": "▶️ Boshlash",
             "cancel": "❌ Bekor qilish",
@@ -129,7 +119,8 @@ def reset_to_start(chat_id, lang):
         "photos": [],
         "photo_done_sent": False,
         "submitted_at": None,
-        "sla_notified": False
+        "sla_notified": False,
+        "task_gid": None
     }
     send(chat_id, TEXTS[lang]["start_info"], kb([TEXTS[lang]["buttons"]["start"]]))
 
@@ -176,6 +167,8 @@ def create_asana_task(fio, tab, tg_id, photos, lang):
             files={"file": p}
         )
 
+    return task["gid"]
+
 def get_task_lang_and_comment(task_gid):
     task = requests.get(
         f"https://app.asana.com/api/1.0/tasks/{task_gid}",
@@ -204,11 +197,17 @@ def telegram():
         return "ok"
 
     cid = msg["chat"]["id"]
-    txt = msg.get("text", "")
+    txt = msg.get("text")
     photos = msg.get("photo")
+
     state = user_states.get(cid)
 
-    if txt == "/start" or cid not in user_data:
+    # 🔒 ЖЁСТКИЙ БЛОК
+    if state == "WAIT_RESULT":
+        send(cid, TEXTS[user_data[cid]["lang"]]["wait_result"])
+        return "ok"
+
+    if txt == "/start":
         user_states[cid] = "LANG"
         user_data[cid] = {}
         send(cid, TEXTS["ru"]["choose_lang"], kb(["Русский 🇷🇺", "O‘zbek 🇺🇿"]))
@@ -221,10 +220,6 @@ def telegram():
 
     lang = user_data[cid]["lang"]
     btn = TEXTS[lang]["buttons"]
-
-    if state == "WAIT_RESULT":
-        send(cid, TEXTS[lang]["wait_result"])
-        return "ok"
 
     if state == "READY" and txt == btn["start"]:
         user_states[cid] = "WAIT_FIO"
@@ -246,8 +241,6 @@ def telegram():
             return "ok"
         user_data[cid]["tab"] = txt
         user_states[cid] = "WAIT_PHOTO"
-        user_data[cid]["photos"] = []
-        user_data[cid]["photo_done_sent"] = False
         send(cid, TEXTS[lang]["photo"], kb([btn["cancel"]]))
         return "ok"
 
@@ -257,21 +250,14 @@ def telegram():
             return "ok"
 
         if photos:
-            current = len(user_data[cid]["photos"])
-            to_add = min(len(photos), REQUIRED_PHOTOS - current)
-
-            for i in range(to_add):
-                user_data[cid]["photos"].append(download_file(photos[i]["file_id"]))
-
-            total = len(user_data[cid]["photos"])
-            left = REQUIRED_PHOTOS - total
-
+            user_data[cid]["photos"].append(
+                download_file(photos[-1]["file_id"])
+            )
+            left = REQUIRED_PHOTOS - len(user_data[cid]["photos"])
             if left > 0:
                 send(cid, TEXTS[lang]["photo_left"].format(n=left))
             else:
-                if not user_data[cid]["photo_done_sent"]:
-                    user_data[cid]["photo_done_sent"] = True
-                    send(cid, TEXTS[lang]["photo_done"], kb([btn["finish"]]))
+                send(cid, TEXTS[lang]["photo_done"], kb([btn["finish"]]))
             return "ok"
 
         if txt == btn["finish"]:
@@ -279,7 +265,7 @@ def telegram():
                 send(cid, TEXTS[lang]["need_photos"])
                 return "ok"
 
-            create_asana_task(
+            task_gid = create_asana_task(
                 user_data[cid]["fio"],
                 user_data[cid]["tab"],
                 cid,
@@ -287,9 +273,11 @@ def telegram():
                 lang
             )
 
+            user_data[cid]["task_gid"] = task_gid
             user_states[cid] = "WAIT_RESULT"
             user_data[cid]["submitted_at"] = time.time()
             user_data[cid]["sla_notified"] = False
+
             send(cid, TEXTS[lang]["submitted"])
             return "ok"
 
@@ -302,9 +290,9 @@ def sla_monitor():
         for cid, state in list(user_states.items()):
             if state == "WAIT_RESULT":
                 data = user_data.get(cid)
-                if not data:
+                if not data or data["sla_notified"]:
                     continue
-                if not data["sla_notified"] and data["submitted_at"] and now - data["submitted_at"] > SLA_SECONDS:
+                if now - data["submitted_at"] > SLA_SECONDS:
                     send(cid, TEXTS[data["lang"]]["sla_late"])
                     data["sla_notified"] = True
         time.sleep(60)
@@ -320,9 +308,6 @@ def asana():
         r.headers["X-Hook-Secret"] = secret
         return r
 
-    if request.method == "GET":
-        return "ok"
-
     for e in (request.json or {}).get("events", []):
         gid = e.get("resource", {}).get("gid")
         if gid:
@@ -335,12 +320,13 @@ def process_task(task_gid):
         r = requests.get(
             f"https://app.asana.com/api/1.0/tasks/{task_gid}",
             headers=ASANA_HEADERS,
-            params={"opt_fields": "approval_status"}
+            params={"opt_fields": "approval_status,custom_fields.name,custom_fields.display_value"}
         )
         if r.status_code != 200:
             continue
 
-        status = r.json()["data"]["approval_status"]
+        data = r.json()["data"]
+        status = data["approval_status"]
         if status == "pending":
             continue
 
@@ -352,13 +338,7 @@ def process_task(task_gid):
         lang, reason = get_task_lang_and_comment(task_gid)
         text = TEXTS[lang]["approved"] if status == "approved" else TEXTS[lang]["rejected"].format(reason=reason)
 
-        task = requests.get(
-            f"https://app.asana.com/api/1.0/tasks/{task_gid}",
-            headers=ASANA_HEADERS,
-            params={"opt_fields": "custom_fields.name,custom_fields.display_value"}
-        ).json()["data"]
-
-        for f in task["custom_fields"]:
+        for f in data["custom_fields"]:
             if f["name"] == "Telegram ID":
                 chat_id = int(f["display_value"])
                 send(chat_id, text)
@@ -371,7 +351,6 @@ def root():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
 
 
 
