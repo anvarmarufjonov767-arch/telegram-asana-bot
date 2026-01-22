@@ -6,7 +6,7 @@ import threading
 
 app = Flask(__name__)
 
-# ========= ENV =========
+# ================= ENV =================
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 ASANA_TOKEN = os.environ["ASANA_TOKEN"]
 ASANA_PROJECT_ID = os.environ["ASANA_PROJECT_ID"]
@@ -17,16 +17,16 @@ ASANA_HEADERS = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 
 REQUIRED_PHOTOS = 3
 
-# ========= STATE =========
+# ================= STATE =================
 user_states = {}
 user_data = {}
 sent_notifications = set()
 
-# ========= TEXTS =========
+# ================= TEXTS =================
 TEXTS = {
     "ru": {
         "choose_lang": "Выберите язык / Tilni tanlang",
-        "start": (
+        "start_info": (
             "ℹ️ Фото-контроль брендированного автомобиля\n\n"
             "Для прохождения проверки:\n"
             "1️⃣ Укажите ФИО\n"
@@ -71,7 +71,7 @@ TEXTS = {
     },
     "uz": {
         "choose_lang": "Tilni tanlang / Выберите язык",
-        "start": (
+        "start_info": (
             "ℹ️ Brendlangan avtomobil uchun foto-nazorat\n\n"
             "Tekshiruvdan o‘tish uchun:\n"
             "1️⃣ F.I.Sh. ni kiriting\n"
@@ -104,7 +104,8 @@ TEXTS = {
         "rejected": (
             "❌ Foto-nazoratdan o‘tilmadi\n\n"
             "Sabab:\n{reason}\n\n"
-            "Iltimos, kamchiliklarni bartaraf etib, fotosuratlarni qayta yuboring."
+            "Iltimos, kamchiliklarni bartaraf etib,\n"
+            "fotosuratlarni qayta yuboring."
         ),
         "need_photos": "Yakunlash uchun 3 ta fotosurat yuborilishi kerak.",
         "cancel": "❌ Amal bekor qilindi.",
@@ -116,7 +117,7 @@ TEXTS = {
     }
 }
 
-# ========= HELPERS =========
+# ================= HELPERS =================
 def kb(buttons):
     return {"keyboard": [[{"text": b}] for b in buttons], "resize_keyboard": True}
 
@@ -137,14 +138,13 @@ def t(chat_id, key, **kw):
     return TEXTS[lang][key].format(**kw)
 
 
-# ========= FILE =========
 def download_file(file_id):
     info = requests.get(f"{TELEGRAM_API}/getFile", params={"file_id": file_id}).json()
     path = info["result"]["file_path"]
     return requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}").content
 
 
-# ========= ASANA =========
+# ================= ASANA =================
 def create_asana_task(fio, tab, tg_id, photos, lang):
     notes = f"ФИО:\n{fio}\n\nLANG:{lang}"
 
@@ -190,7 +190,7 @@ def get_task_lang_and_comment(task_gid):
     return lang, "-"
 
 
-# ========= TELEGRAM =========
+# ================= TELEGRAM =================
 @app.route("/webhook", methods=["POST"])
 def telegram():
     msg = (request.json or {}).get("message")
@@ -202,72 +202,90 @@ def telegram():
     photos = msg.get("photo")
     state = user_states.get(cid)
 
+    # /start
     if txt == "/start":
         user_states[cid] = "LANG"
         user_data[cid] = {"photos": []}
         send(cid, TEXTS["ru"]["choose_lang"], kb(["Русский 🇷🇺", "O‘zbek 🇺🇿"]))
         return "ok"
 
+    # LANGUAGE
     if state == "LANG":
         user_data[cid]["lang"] = "uz" if "O‘zbek" in txt else "ru"
-        user_states[cid] = "FIO"
-        send(cid, t(cid, "start"), kb([TEXTS[user_data[cid]["lang"]]["buttons"]["start"]]))
+        user_states[cid] = "READY"
+        send(cid, t(cid, "start_info"), kb([TEXTS[user_data[cid]["lang"]]["buttons"]["start"]]))
         return "ok"
 
-    if state == "FIO" and txt:
-        user_data[cid]["fio"] = txt
-        user_states[cid] = "TAB"
-        send(cid, t(cid, "tab"), kb([TEXTS[user_data[cid]["lang"]]["buttons"]["cancel"]]))
+    lang = user_data[cid]["lang"]
+    btn = TEXTS[lang]["buttons"]
+
+    # READY
+    if state == "READY":
+        if txt == btn["start"]:
+            user_states[cid] = "WAIT_FIO"
+            send(cid, t(cid, "fio"), kb([btn["cancel"]]))
         return "ok"
 
-    if state == "TAB" and txt:
-        if txt.startswith("❌"):
-            send(cid, t(cid, "cancel"), remove_kb())
-            user_states.pop(cid, None)
-            user_data.pop(cid, None)
+    # WAIT_FIO
+    if state == "WAIT_FIO":
+        if txt == btn["cancel"]:
+            user_states[cid] = "READY"
+            user_data[cid]["photos"] = []
+            send(cid, TEXTS[lang]["cancel"], kb([btn["start"]]))
             return "ok"
-        user_data[cid]["tab"] = txt
-        user_states[cid] = "PHOTO"
-        send(cid, t(cid, "photo"), kb([TEXTS[user_data[cid]["lang"]]["buttons"]["cancel"]]))
+
+        user_data[cid]["fio"] = txt
+        user_states[cid] = "WAIT_TAB"
+        send(cid, t(cid, "tab"), kb([btn["cancel"]]))
         return "ok"
 
-    if state == "PHOTO":
+    # WAIT_TAB
+    if state == "WAIT_TAB":
+        if txt == btn["cancel"]:
+            user_states[cid] = "READY"
+            user_data[cid]["photos"] = []
+            send(cid, TEXTS[lang]["cancel"], kb([btn["start"]]))
+            return "ok"
+
+        user_data[cid]["tab"] = txt
+        user_states[cid] = "WAIT_PHOTO"
+        send(cid, t(cid, "photo"), kb([btn["cancel"]]))
+        return "ok"
+
+    # WAIT_PHOTO
+    if state == "WAIT_PHOTO":
+        if txt == btn["cancel"]:
+            user_states[cid] = "READY"
+            user_data[cid]["photos"] = []
+            send(cid, TEXTS[lang]["cancel"], kb([btn["start"]]))
+            return "ok"
+
         if photos:
             if len(user_data[cid]["photos"]) < REQUIRED_PHOTOS:
                 user_data[cid]["photos"].append(download_file(photos[-1]["file_id"]))
                 left = REQUIRED_PHOTOS - len(user_data[cid]["photos"])
                 if left > 0:
-                    send(cid, t(cid, "photo_left", n=left))
+                    send(cid, TEXTS[lang]["photo_left"].format(n=left))
                 else:
-                    send(
-                        cid,
-                        t(cid, "photo_done"),
-                        kb([TEXTS[user_data[cid]["lang"]]["buttons"]["finish"]])
-                    )
+                    send(cid, TEXTS[lang]["photo_done"], kb([btn["finish"]]))
             return "ok"
 
-        if txt.startswith("✅"):
+        if txt == btn["finish"]:
             if len(user_data[cid]["photos"]) != REQUIRED_PHOTOS:
-                send(cid, t(cid, "need_photos"))
+                send(cid, TEXTS[lang]["need_photos"])
                 return "ok"
 
             d = user_data[cid]
             create_asana_task(d["fio"], d["tab"], cid, d["photos"], d["lang"])
-            send(cid, t(cid, "submitted"), remove_kb())
-            user_states.pop(cid, None)
-            user_data.pop(cid, None)
-            return "ok"
-
-        if txt.startswith("❌"):
-            send(cid, t(cid, "cancel"), remove_kb())
-            user_states.pop(cid, None)
-            user_data.pop(cid, None)
+            user_states[cid] = "READY"
+            user_data[cid]["photos"] = []
+            send(cid, TEXTS[lang]["submitted"], kb([btn["start"]]))
             return "ok"
 
     return "ok"
 
 
-# ========= ASANA WEBHOOK =========
+# ================= ASANA WEBHOOK =================
 @app.route("/asana", methods=["GET", "POST"])
 def asana():
     secret = request.headers.get("X-Hook-Secret")
@@ -309,7 +327,6 @@ def process_task(task_gid):
         lang, reason = get_task_lang_and_comment(task_gid)
         msg = TEXTS[lang]["approved"] if status == "approved" else TEXTS[lang]["rejected"].format(reason=reason)
 
-        # telegram id берём из custom field
         task = requests.get(
             f"https://app.asana.com/api/1.0/tasks/{task_gid}",
             headers=ASANA_HEADERS,
@@ -329,6 +346,7 @@ def root():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
 
 
 
