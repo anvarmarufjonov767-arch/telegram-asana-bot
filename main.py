@@ -3,6 +3,7 @@ import requests
 import os
 import time
 import threading
+import re
 
 app = Flask(__name__)
 
@@ -26,45 +27,57 @@ sent_notifications = set()
 # ================= TEXTS =================
 TEXTS = {
     "ru": {
-        "choose_lang": "Выберите язык / Tilni tanlang",
+        "choose_lang": "🌐 Выберите язык",
         "start_info": (
-            "ℹ️ Фото-контроль брендированного автомобиля\n\n"
-            "Порядок проверки:\n"
-            "1️⃣ ФИО\n"
-            "2️⃣ Табельный номер\n"
-            "3️⃣ 3 фотографии автомобиля\n\n"
+            "🚗 *Фото-контроль брендированного автомобиля*\n\n"
+            "Этот бот нужен для проверки автомобиля перед выездом.\n\n"
+            "📌 Порядок действий:\n"
+            "1️⃣ Введите ФИО\n"
+            "2️⃣ Введите табельный номер\n"
+            "3️⃣ Отправьте 3 фото автомобиля\n\n"
+            "⚠️ ВАЖНО:\n"
+            "• на фото должен быть *чётко виден брендинг*\n"
+            "• должен быть *чётко виден госномер*\n"
+            "• каждое фото отправляется *отдельным сообщением*\n\n"
+            "После отправки заявка уйдёт на проверку.\n"
             "Результат придёт в этот чат."
         ),
-        "fio": "✍️ Шаг 1 из 3\nВведите ФИО полностью",
-        "tab": "🔢 Шаг 2 из 3\nВведите табельный номер",
+        "fio": "✍️ *Шаг 1 из 3*\n\nВведите ФИО полностью\n\nПример:\nИванов Иван Иванович",
+        "tab": (
+            "🔢 *Шаг 2 из 3*\n\n"
+            "Введите табельный номер\n\n"
+            "Требования:\n"
+            "• только цифры\n"
+            "• ровно 5 цифр\n\n"
+            "Пример: 12345"
+        ),
+        "tab_invalid": "❌ Табельный номер введён неверно.\n\nВведите *ровно 5 цифр* без букв.",
         "photo": (
-            "📸 Шаг 3 из 3\n\n"
-            "Отправьте 3 фото автомобиля:\n"
-            "• авто целиком\n"
-            "• номер виден\n"
-            "• брендировка видна"
+            "📸 *Шаг 3 из 3*\n\n"
+            "Отправьте *3 фотографии автомобиля*:\n\n"
+            "1️⃣ Авто целиком\n"
+            "2️⃣ Чётко виден госномер\n"
+            "3️⃣ Чётко виден брендинг\n\n"
+            "⚠️ Фото должны быть чёткими и разными.\n"
+            "Каждое фото — отдельным сообщением."
         ),
-        "photo_left": "📸 Фото получено. Осталось: {n}",
-        "photo_done": "📸 Все фотографии получены.",
-        "submitted": "⏳ Заявка принята\nМатериалы переданы на проверку.",
-        "wait_result": (
-            "⏳ Ваша заявка находится на проверке.\n\n"
-            "Пожалуйста, ожидайте результат."
+        "photo_left": "📸 Фото принято.\nОсталось отправить: {n}",
+        "photo_done": "✅ Все фотографии получены.\n\nНажмите «Завершить», чтобы отправить заявку.",
+        "submitted": (
+            "⏳ *Заявка отправлена*\n\n"
+            "Материалы переданы на проверку.\n"
+            "Пожалуйста, ожидайте результат.\n\n"
+            "⛔ Пока заявка проверяется, бот будет недоступен."
         ),
+        "wait_result": "⏳ Ваша заявка сейчас на проверке.\nПожалуйста, ожидайте результат.",
         "sla_late": (
-            "⏳ Проверка занимает больше времени.\n\n"
-            "Ваша заявка всё ещё находится на рассмотрении.\n"
-            "Результат будет направлен дополнительно."
+            "⏳ Проверка занимает больше времени, чем обычно.\n\n"
+            "Ваша заявка всё ещё рассматривается.\n"
+            "Результат будет отправлен позже."
         ),
-        "approved": (
-            "✅ Фото-контроль пройден\n\n"
-            "Автомобиль соответствует требованиям."
-        ),
-        "rejected": (
-            "❌ Фото-контроль не пройден\n\n"
-            "Причина:\n{reason}"
-        ),
-        "need_photos": "Необходимо отправить ровно 3 фото.",
+        "approved": "✅ *Фото-контроль пройден*\n\nАвтомобиль соответствует требованиям.",
+        "rejected": "❌ *Фото-контроль не пройден*\n\nПричина:\n{reason}",
+        "need_photos": "❌ Нужно отправить *ровно 3 фотографии*.",
         "default_reject": "Причина не указана проверяющим.",
         "buttons": {
             "start": "▶️ Начать",
@@ -73,26 +86,50 @@ TEXTS = {
         }
     },
     "uz": {
-        "choose_lang": "Tilni tanlang / Выберите язык",
+        "choose_lang": "🌐 Tilni tanlang",
         "start_info": (
-            "ℹ️ Brendlangan avtomobil uchun foto-nazorat\n\n"
-            "Tekshiruv tartibi:\n"
-            "1️⃣ F.I.Sh.\n"
-            "2️⃣ Tabel raqami\n"
-            "3️⃣ 3 ta fotosurat\n\n"
-            "Natija shu chatga yuboriladi."
+            "🚗 *Brendlangan avtomobil uchun foto-nazorat*\n\n"
+            "Bu bot avtomobilni tekshirish uchun mo‘ljallangan.\n\n"
+            "📌 Qadamlar:\n"
+            "1️⃣ F.I.Sh. kiriting\n"
+            "2️⃣ Tabel raqamini kiriting\n"
+            "3️⃣ 3 ta avtomobil fotosuratini yuboring\n\n"
+            "⚠️ MUHIM:\n"
+            "• brending aniq ko‘rinishi kerak\n"
+            "• davlat raqami aniq ko‘rinishi kerak\n"
+            "• har bir foto alohida yuboriladi"
         ),
-        "fio": "✍️ 1-bosqich\nF.I.Sh. ni kiriting",
-        "tab": "🔢 2-bosqich\nTabel raqamini kiriting",
-        "photo": "📸 3-bosqich\n\n3 ta fotosurat yuboring",
-        "photo_left": "📸 Qabul qilindi. Qolgan: {n}",
-        "photo_done": "📸 Barcha fotosuratlar qabul qilindi.",
-        "submitted": "⏳ Ariza qabul qilindi.",
-        "wait_result": "⏳ Arizangiz tekshiruvda. Iltimos, kuting.",
-        "sla_late": "⏳ Tekshiruv cho‘zildi. Natija keyinroq yuboriladi.",
+        "fio": "✍️ *1-bosqich*\n\nF.I.Sh. ni to‘liq kiriting",
+        "tab": (
+            "🔢 *2-bosqich*\n\n"
+            "Tabel raqamini kiriting\n\n"
+            "Talablar:\n"
+            "• faqat raqamlar\n"
+            "• aniq 5 ta raqam\n\n"
+            "Misol: 12345"
+        ),
+        "tab_invalid": "❌ Tabel raqami noto‘g‘ri.\n\nAniq *5 ta raqam* kiriting.",
+        "photo": (
+            "📸 *3-bosqich*\n\n"
+            "3 ta avtomobil fotosuratini yuboring:\n\n"
+            "1️⃣ Avtomobil to‘liq\n"
+            "2️⃣ Davlat raqami ko‘rinib tursin\n"
+            "3️⃣ Brending ko‘rinib tursin\n\n"
+            "Har bir foto alohida yuborilishi kerak."
+        ),
+        "photo_left": "📸 Qabul qilindi.\nQolgan: {n}",
+        "photo_done": "✅ Barcha fotosuratlar qabul qilindi.\n\n«Yakunlash» tugmasini bosing.",
+        "submitted": (
+            "⏳ *Ariza yuborildi*\n\n"
+            "Tekshiruvga jo‘natildi.\n"
+            "Iltimos, natijani kuting.\n\n"
+            "⛔ Tekshiruv tugaguncha bot yopiq."
+        ),
+        "wait_result": "⏳ Arizangiz tekshiruvda.\nIltimos, kuting.",
+        "sla_late": "⏳ Tekshiruv biroz cho‘zildi.\nNatija keyinroq yuboriladi.",
         "approved": "✅ Foto-nazoratdan o‘tildi.",
         "rejected": "❌ O‘tilmadi.\nSabab:\n{reason}",
-        "need_photos": "Aniq 3 ta fotosurat kerak.",
+        "need_photos": "❌ Aniq 3 ta fotosurat kerak.",
         "default_reject": "Sabab ko‘rsatilmagan.",
         "buttons": {
             "start": "▶️ Boshlash",
@@ -107,7 +144,7 @@ def kb(buttons):
     return {"keyboard": [[{"text": b}] for b in buttons], "resize_keyboard": True}
 
 def send(chat_id, text, keyboard=None):
-    payload = {"chat_id": chat_id, "text": text}
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
     if keyboard:
         payload["reply_markup"] = keyboard
     requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)
@@ -117,7 +154,6 @@ def reset_to_start(chat_id, lang):
     user_data[chat_id] = {
         "lang": lang,
         "photos": [],
-        "photo_done_sent": False,
         "submitted_at": None,
         "sla_notified": False,
         "task_gid": None
@@ -202,7 +238,7 @@ def telegram():
 
     state = user_states.get(cid)
 
-    # 🔒 ЖЁСТКИЙ БЛОК
+    # 🔒 БЛОК НА ВРЕМЯ ПРОВЕРКИ
     if state == "WAIT_RESULT":
         send(cid, TEXTS[user_data[cid]["lang"]]["wait_result"])
         return "ok"
@@ -238,6 +274,9 @@ def telegram():
     if state == "WAIT_TAB":
         if txt == btn["cancel"]:
             reset_to_start(cid, lang)
+            return "ok"
+        if not re.fullmatch(r"\d{5}", txt):
+            send(cid, TEXTS[lang]["tab_invalid"])
             return "ok"
         user_data[cid]["tab"] = txt
         user_states[cid] = "WAIT_PHOTO"
