@@ -6,18 +6,19 @@ import time
 app = Flask(__name__)
 
 # ========= ENV =========
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ASANA_TOKEN = os.environ.get("ASANA_TOKEN")
-ASANA_PROJECT_ID = os.environ.get("ASANA_PROJECT_ID")
-ASANA_ASSIGNEE_ID = os.environ.get("ASANA_ASSIGNEE_ID")
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+ASANA_TOKEN = os.environ["ASANA_TOKEN"]
+ASANA_PROJECT_ID = os.environ["ASANA_PROJECT_ID"]
+ASANA_ASSIGNEE_ID = os.environ["ASANA_ASSIGNEE_ID"]
 
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+ASANA_HEADERS = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 
 # ========= STATE =========
 user_states = {}
 user_data = {}
 
-# 🔐 анти-дубли уведомлений
+# анти-дубли (в рамках одного аптайма)
 sent_notifications = set()
 
 # ========= HELPERS =========
@@ -46,10 +47,9 @@ def download_file(file_id):
 
 
 def get_last_comment(task_gid):
-    headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
     r = requests.get(
         f"https://app.asana.com/api/1.0/tasks/{task_gid}/stories",
-        headers=headers,
+        headers=ASANA_HEADERS,
         timeout=10
     ).json()
 
@@ -62,12 +62,10 @@ def get_last_comment(task_gid):
 
 # ========= ASANA TASK =========
 def create_asana_task(fio, tab, telegram_id, photos):
-    headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
-
     # --- custom fields ---
     fields = requests.get(
         f"https://app.asana.com/api/1.0/projects/{ASANA_PROJECT_ID}/custom_field_settings",
-        headers=headers,
+        headers=ASANA_HEADERS,
         timeout=10
     ).json()["data"]
 
@@ -82,7 +80,7 @@ def create_asana_task(fio, tab, telegram_id, photos):
     # --- create task ---
     task = requests.post(
         "https://app.asana.com/api/1.0/tasks",
-        headers={**headers, "Content-Type": "application/json"},
+        headers={**ASANA_HEADERS, "Content-Type": "application/json"},
         json={
             "data": {
                 "name": "Заявка на фото-контроль",
@@ -101,7 +99,7 @@ def create_asana_task(fio, tab, telegram_id, photos):
     for photo in photos:
         requests.post(
             f"https://app.asana.com/api/1.0/tasks/{task['gid']}/attachments",
-            headers=headers,
+            headers=ASANA_HEADERS,
             files={"file": photo},
             timeout=20
         )
@@ -180,7 +178,6 @@ def asana_webhook():
 
     data = request.json or {}
     events = data.get("events", [])
-    headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 
     for e in events:
         task_gid = e.get("resource", {}).get("gid")
@@ -188,11 +185,11 @@ def asana_webhook():
             continue
 
         # даём Asana обновить статус
-        time.sleep(1)
+        time.sleep(3)
 
         task_resp = requests.get(
             f"https://app.asana.com/api/1.0/tasks/{task_gid}",
-            headers=headers,
+            headers=ASANA_HEADERS,
             params={
                 "opt_fields": (
                     "name,approval_status,"
@@ -211,7 +208,6 @@ def asana_webhook():
         if approval == "pending":
             continue
 
-        # 🔐 анти-дубликат
         dedup_key = f"{task_gid}:{approval}"
         if dedup_key in sent_notifications:
             continue
@@ -220,7 +216,10 @@ def asana_webhook():
         courier_tg = None
         for f in task.get("custom_fields", []):
             if f["name"] == "Telegram ID" and f.get("display_value"):
-                courier_tg = int(f["display_value"])
+                try:
+                    courier_tg = int(f["display_value"])
+                except ValueError:
+                    courier_tg = None
 
         if not courier_tg:
             continue
@@ -247,6 +246,7 @@ def asana_webhook():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
