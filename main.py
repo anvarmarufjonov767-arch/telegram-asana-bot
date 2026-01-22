@@ -19,7 +19,7 @@ ASANA_HEADERS = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 user_states = {}
 user_data = {}
 
-# анти-дубли (на аптайм)
+# защита от дублей (на время аптайма)
 sent_notifications = set()
 
 # ========= HELPERS =========
@@ -60,7 +60,7 @@ def get_last_comment(task_gid):
     return "не указана"
 
 
-# ========= ASANA TASK =========
+# ========= ASANA TASK CREATION =========
 def create_asana_task(fio, tab, telegram_id, photos):
     fields = requests.get(
         f"https://app.asana.com/api/1.0/projects/{ASANA_PROJECT_ID}/custom_field_settings",
@@ -137,6 +137,7 @@ def telegram_webhook():
 
         if text.lower() == "готово" and user_states.get(chat_id) == "WAIT_PHOTO":
             d = user_data.get(chat_id)
+
             if not d["photos"]:
                 send_message(chat_id, "Нужно хотя бы одно фото")
                 return "ok"
@@ -150,16 +151,9 @@ def telegram_webhook():
     return "ok"
 
 
-# ========= ASANA LOGIC (RETRY + GUARANTEE) =========
+# ========= ASANA PROCESSING (RETRY + GUARANTEE) =========
 def process_task(task_gid):
-    """
-    Отдельный поток:
-    - ждёт обновление approval
-    - делает ретраи
-    - гарантирует доставку
-    """
-
-    for attempt in range(6):  # до ~12 секунд
+    for _ in range(6):  # ~12 секунд
         time.sleep(2)
 
         r = requests.get(
@@ -215,22 +209,37 @@ def process_task(task_gid):
 # ========= ASANA WEBHOOK =========
 @app.route("/asana", methods=["GET", "POST"])
 def asana_webhook():
-    # handshake
+    # handshake от Asana
     secret = request.headers.get("X-Hook-Secret")
     if secret:
         r = make_response("")
         r.headers["X-Hook-Secret"] = secret
         return r
 
+    # GET от UptimeRobot / браузера
+    if request.method == "GET":
+        return "ok"
+
+    # POST от Asana
     data = request.json or {}
     events = data.get("events", [])
 
     for e in events:
         task_gid = e.get("resource", {}).get("gid")
         if task_gid:
-            threading.Thread(target=process_task, args=(task_gid,)).start()
+            threading.Thread(
+                target=process_task,
+                args=(task_gid,),
+                daemon=True
+            ).start()
 
     return "ok"
+
+
+# ========= ROOT (КОСМЕТИКА) =========
+@app.route("/")
+def index():
+    return "OK"
 
 
 # ========= RUN =========
