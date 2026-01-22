@@ -16,6 +16,7 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 ASANA_HEADERS = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 
 REQUIRED_PHOTOS = 3
+SLA_SECONDS = 30 * 60  # 30 минут
 
 # ================= STATE =================
 user_states = {}        # chat_id -> state
@@ -45,13 +46,15 @@ TEXTS = {
         ),
         "photo_left": "📸 Фото получены. Осталось: {n}",
         "photo_done": "📸 Все фотографии получены.",
-        "submitted": (
-            "⏳ Заявка принята\n"
-            "Материалы переданы на проверку."
-        ),
+        "submitted": "⏳ Заявка принята\nМатериалы переданы на проверку.",
         "wait_result": (
             "⏳ Ваша заявка находится на проверке.\n\n"
             "Пожалуйста, ожидайте результат."
+        ),
+        "sla_late": (
+            "⏳ Проверка занимает больше времени.\n\n"
+            "Ваша заявка всё ещё находится на рассмотрении.\n"
+            "Результат будет направлен дополнительно."
         ),
         "approved": (
             "✅ Фото-контроль пройден\n\n"
@@ -92,6 +95,11 @@ TEXTS = {
             "⏳ Arizangiz tekshiruvda.\n\n"
             "Iltimos, natijani kuting."
         ),
+        "sla_late": (
+            "⏳ Tekshiruv biroz cho‘zildi.\n\n"
+            "Arizangiz hali ham ko‘rib chiqilmoqda.\n"
+            "Natija keyinroq yuboriladi."
+        ),
         "approved": "✅ Foto-nazoratdan o‘tildi.",
         "rejected": "❌ O‘tilmadi.\nSabab:\n{reason}",
         "need_photos": "3 ta fotosurat kerak.",
@@ -116,7 +124,13 @@ def send(chat_id, text, keyboard=None):
 
 def reset_to_start(chat_id, lang):
     user_states[chat_id] = "READY"
-    user_data[chat_id] = {"lang": lang, "photos": []}
+    user_data[chat_id] = {
+        "lang": lang,
+        "photos": [],
+        "photo_done_sent": False,
+        "submitted_at": None,
+        "sla_notified": False
+    }
     send(chat_id, TEXTS[lang]["start_info"], kb([TEXTS[lang]["buttons"]["start"]]))
 
 def download_file(file_id):
@@ -130,8 +144,7 @@ def create_asana_task(fio, tab, tg_id, photos, lang):
 
     fields = requests.get(
         f"https://app.asana.com/api/1.0/projects/{ASANA_PROJECT_ID}/custom_field_settings",
-        headers=ASANA_HEADERS,
-        timeout=10
+        headers=ASANA_HEADERS
     ).json()["data"]
 
     custom_fields = {}
@@ -153,16 +166,14 @@ def create_asana_task(fio, tab, tg_id, photos, lang):
             "resource_subtype": "approval",
             "approval_status": "pending",
             "custom_fields": custom_fields
-        }},
-        timeout=10
+        }}
     ).json()["data"]
 
     for p in photos:
         requests.post(
             f"https://app.asana.com/api/1.0/tasks/{task['gid']}/attachments",
             headers=ASANA_HEADERS,
-            files={"file": p},
-            timeout=20
+            files={"file": p}
         )
 
 def get_task_lang_and_comment(task_gid):
@@ -236,6 +247,7 @@ def telegram():
         user_data[cid]["tab"] = txt
         user_states[cid] = "WAIT_PHOTO"
         user_data[cid]["photos"] = []
+        user_data[cid]["photo_done_sent"] = False
         send(cid, TEXTS[lang]["photo"], kb([btn["cancel"]]))
         return "ok"
 
@@ -257,13 +269,16 @@ def telegram():
             if left > 0:
                 send(cid, TEXTS[lang]["photo_left"].format(n=left))
             else:
-                send(cid, TEXTS[lang]["photo_done"], kb([btn["finish"]]))
+                if not user_data[cid]["photo_done_sent"]:
+                    user_data[cid]["photo_done_sent"] = True
+                    send(cid, TEXTS[lang]["photo_done"], kb([btn["finish"]]))
             return "ok"
 
         if txt == btn["finish"]:
             if len(user_data[cid]["photos"]) != REQUIRED_PHOTOS:
                 send(cid, TEXTS[lang]["need_photos"])
                 return "ok"
+
             create_asana_task(
                 user_data[cid]["fio"],
                 user_data[cid]["tab"],
@@ -271,11 +286,30 @@ def telegram():
                 user_data[cid]["photos"],
                 lang
             )
-            send(cid, TEXTS[lang]["submitted"])
+
             user_states[cid] = "WAIT_RESULT"
+            user_data[cid]["submitted_at"] = time.time()
+            user_data[cid]["sla_notified"] = False
+            send(cid, TEXTS[lang]["submitted"])
             return "ok"
 
     return "ok"
+
+# ================= SLA MONITOR =================
+def sla_monitor():
+    while True:
+        now = time.time()
+        for cid, state in list(user_states.items()):
+            if state == "WAIT_RESULT":
+                data = user_data.get(cid)
+                if not data:
+                    continue
+                if not data["sla_notified"] and data["submitted_at"] and now - data["submitted_at"] > SLA_SECONDS:
+                    send(cid, TEXTS[data["lang"]]["sla_late"])
+                    data["sla_notified"] = True
+        time.sleep(60)
+
+threading.Thread(target=sla_monitor, daemon=True).start()
 
 # ================= ASANA WEBHOOK =================
 @app.route("/asana", methods=["GET", "POST"])
@@ -326,8 +360,9 @@ def process_task(task_gid):
 
         for f in task["custom_fields"]:
             if f["name"] == "Telegram ID":
-                send(int(f["display_value"]), text)
-                reset_to_start(int(f["display_value"]), lang)
+                chat_id = int(f["display_value"])
+                send(chat_id, text)
+                reset_to_start(chat_id, lang)
         return
 
 @app.route("/")
