@@ -22,7 +22,9 @@ ASANA_HEADERS = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 
 REQUIRED_PHOTOS = 3
 SLA_SECONDS = 30 * 60
-REWARDS_FILE = "/data/rewards.xlsx"
+
+# ✅ ВАЖНО: относительный путь
+REWARDS_FILE = "data/rewards.xlsx"
 
 # =========================================================
 # ======================= STATE =============================
@@ -190,13 +192,29 @@ def get_reward(chat_id):
     if not os.path.exists(REWARDS_FILE):
         return None
 
-    wb = load_workbook(REWARDS_FILE)
+    wb = load_workbook(REWARDS_FILE, data_only=True)
     ws = wb.active
 
+    headers = {}
+    for i, cell in enumerate(ws[1]):
+        headers[str(cell.value).strip()] = i
+
+    required = ["ФИО", "Telegram ID", "Промокод", "Сумма", "Отработанные дни"]
+    for col in required:
+        if col not in headers:
+            return None
+
     for row in ws.iter_rows(min_row=2, values_only=True):
-        fio, tab, tg_id, code, amount, days = row
-        if str(tg_id) == str(chat_id):
-            return fio, code, amount, days
+        tg_id = row[headers["Telegram ID"]]
+        if tg_id is None:
+            continue
+        if str(tg_id).strip() == str(chat_id):
+            return (
+                row[headers["ФИО"]],
+                row[headers["Промокод"]],
+                row[headers["Сумма"]],
+                row[headers["Отработанные дни"]],
+            )
     return None
 
 # =========================================================
@@ -446,6 +464,7 @@ def root():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
 
 
 
