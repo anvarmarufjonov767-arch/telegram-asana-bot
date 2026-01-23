@@ -4,6 +4,7 @@ import os
 import time
 import threading
 import re
+import hashlib  # NEW: anti-duplicate photos
 from openpyxl import load_workbook
 
 app = Flask(__name__)
@@ -43,7 +44,7 @@ TEXTS = {
         "menu_buttons": [
             "📸 Фото-контроль",
             "🎁 Вознаграждение",
-            "📄 Статус заявки"   # NEW
+            "📄 Статус заявки"
         ],
 
         "start_info": (
@@ -72,6 +73,9 @@ TEXTS = {
         "photo_left": "📸 Фото принято. Осталось: {n}",
         "photo_done": "✅ Все фотографии получены.\nНажмите «Завершить».",
 
+        # NEW: anti-duplicate
+        "photo_duplicate": "❌ Это фото уже было отправлено. Пожалуйста, сделайте другое.",
+
         "submitted": (
             "⏳ *Заявка отправлена*\n\n"
             "Материалы переданы на проверку.\n"
@@ -95,7 +99,6 @@ TEXTS = {
             "🎟 Промокод:\n*{code}*"
         ),
 
-        # NEW: статус заявки
         "status_no_task": "📄 У вас нет активной заявки.",
         "status_text": (
             "📄 *Статус заявки*\n\n"
@@ -109,14 +112,13 @@ TEXTS = {
             "rejected": "Отклонено"
         },
 
-        # NEW: отмена
         "cancelled": "❌ Заявка отменена.",
 
         "buttons": {
             "start": "▶️ Начать",
             "cancel": "❌ Отменить",
             "finish": "✅ Завершить",
-            "cancel_request": "❌ Отменить заявку"   # NEW
+            "cancel_request": "❌ Отменить заявку"
         }
     },
 
@@ -126,7 +128,7 @@ TEXTS = {
         "menu_buttons": [
             "📸 Foto-nazorat",
             "🎁 Mukofot",
-            "📄 Ariza holati"   # NEW
+            "📄 Ariza holati"
         ],
 
         "start_info": (
@@ -143,6 +145,9 @@ TEXTS = {
         "photo": "📸 *3-bosqich*\n3 ta foto yuboring.",
         "photo_left": "📸 Qabul qilindi. Qolgan: {n}",
         "photo_done": "✅ Barcha foto qabul qilindi.\n«Yakunlash» ni bosing.",
+
+        # NEW: anti-duplicate
+        "photo_duplicate": "❌ Bu rasm allaqachon yuborilgan. Iltimos, boshqa rasm yuboring.",
 
         "submitted": "⏳ *Ariza yuborildi*. Tekshiruv kutilmoqda.",
         "wait_result": "⏳ Ariza tekshiruvda.",
@@ -163,7 +168,6 @@ TEXTS = {
             "🎟 Promokod:\n*{code}*"
         ),
 
-        # NEW
         "status_no_task": "📄 Sizda faol ariza yo‘q.",
         "status_text": (
             "📄 *Ariza holati*\n\n"
@@ -211,7 +215,6 @@ def download_file(file_id):
     path = info["result"]["file_path"]
     return requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}").content
 
-# NEW: статус из Asana
 def get_asana_status(task_gid):
     r = requests.get(
         f"https://app.asana.com/api/1.0/tasks/{task_gid}",
@@ -265,7 +268,6 @@ def telegram():
     lang = user_data.get(cid, {}).get("lang", "ru")
     btn = TEXTS[lang]["buttons"]
 
-    # /start
     if txt == "/start":
         if state == "WAIT_RESULT":
             send(cid, TEXTS[lang]["wait_result"])
@@ -280,7 +282,6 @@ def telegram():
         reset_to_menu(cid, lang)
         return "ok"
 
-    # NEW: статус заявки
     if txt in ("📄 Статус заявки", "📄 Ariza holati"):
         task_gid = user_data.get(cid, {}).get("task_gid")
         if not task_gid:
@@ -300,13 +301,11 @@ def telegram():
         )
         return "ok"
 
-    # NEW: отмена заявки (ТОЛЬКО ДО WAIT_RESULT)
     if txt == btn["cancel_request"] and state != "WAIT_RESULT":
         send(cid, TEXTS[lang]["cancelled"])
         reset_to_menu(cid, lang)
         return "ok"
 
-    # ===== MENU =====
     if state == "MENU":
         if txt in TEXTS[lang]["menu_buttons"]:
             if "Фото" in txt or "Foto" in txt:
@@ -330,10 +329,10 @@ def telegram():
         send(cid, TEXTS[lang]["wait_result"])
         return "ok"
 
-    # ===== PHOTO FLOW =====
     if state == "READY" and txt == btn["start"]:
         user_states[cid] = "WAIT_FIO"
         user_data[cid]["photos"] = []
+        user_data[cid]["photo_hashes"] = set()  # NEW: anti-duplicate
         send(cid, TEXTS[lang]["fio"], kb([btn["cancel"], btn["cancel_request"]]))
         return "ok"
 
@@ -354,9 +353,20 @@ def telegram():
 
     if state == "WAIT_PHOTO":
         user_data[cid].setdefault("photos", [])
+        user_data[cid].setdefault("photo_hashes", set())
 
         if photos:
-            user_data[cid]["photos"].append(download_file(photos[-1]["file_id"]))
+            file_bytes = download_file(photos[-1]["file_id"])
+
+            # NEW: anti-duplicate
+            file_hash = hashlib.md5(file_bytes).hexdigest()
+            if file_hash in user_data[cid]["photo_hashes"]:
+                send(cid, TEXTS[lang]["photo_duplicate"])
+                return "ok"
+
+            user_data[cid]["photo_hashes"].add(file_hash)
+            user_data[cid]["photos"].append(file_bytes)
+
             left = REQUIRED_PHOTOS - len(user_data[cid]["photos"])
             if left > 0:
                 send(cid, TEXTS[lang]["photo_left"].format(n=left))
@@ -521,6 +531,7 @@ def root():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
 
 
 
