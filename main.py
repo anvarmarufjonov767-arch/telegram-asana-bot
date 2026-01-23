@@ -23,7 +23,6 @@ ASANA_HEADERS = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 REQUIRED_PHOTOS = 3
 SLA_SECONDS = 30 * 60
 
-# ✅ ВАЖНО: относительный путь
 REWARDS_FILE = "data/rewards.xlsx"
 
 # =========================================================
@@ -96,6 +95,15 @@ TEXTS = {
             "Если вы считаете, что это ошибка — обратитесь к руководителю."
         ),
 
+        # FIX: локализация вознаграждения
+        "reward_info": (
+            "🎁 *Вознаграждение*\n\n"
+            "👤 {fio}\n"
+            "📅 Отработано дней: {days}\n"
+            "💰 Сумма: {amount}\n\n"
+            "🎟 Промокод:\n*{code}*"
+        ),
+
         "buttons": {
             "start": "▶️ Начать",
             "cancel": "❌ Отменить",
@@ -121,18 +129,14 @@ TEXTS = {
         "tab": (
             "🔢 *2-bosqich*\n\n"
             "Tabel raqamini kiriting\n\n"
-            "Talablar:\n"
             "• faqat raqamlar\n"
-            "• aniq 5 ta raqam"
+            "• 5 ta raqam"
         ),
         "tab_invalid": "❌ Tabel raqami *5 ta raqam* bo‘lishi kerak.",
 
         "photo": (
             "📸 *3-bosqich*\n\n"
-            "3 ta foto yuboring:\n"
-            "• avtomobil to‘liq\n"
-            "• davlat raqami\n"
-            "• brending\n\n"
+            "3 ta foto yuboring.\n"
             "Har biri alohida yuboriladi."
         ),
         "photo_left": "📸 Qabul qilindi. Qolgan: {n}",
@@ -140,7 +144,7 @@ TEXTS = {
 
         "submitted": "⏳ *Ariza yuborildi*. Tekshiruv kutilmoqda.",
         "wait_result": "⏳ Ariza tekshiruvda.",
-        "sla_late": "⏳ Tekshiruv cho‘zildi. Natija keyinroq.",
+        "sla_late": "⏳ Tekshiruv cho‘zildi.",
 
         "approved": "✅ Foto-nazoratdan o‘tildi",
         "rejected": "❌ O‘tilmadi\nSabab:\n{reason}",
@@ -149,8 +153,17 @@ TEXTS = {
 
         "reward_not_found": (
             "🎁 *Mukofot*\n\n"
-            "Mukofot bo‘yicha ma’lumot topilmadi.\n"
+            "Ma’lumot topilmadi.\n"
             "Rahbariyatga murojaat qiling."
+        ),
+
+        # FIX: локализация вознаграждения
+        "reward_info": (
+            "🎁 *Mukofot*\n\n"
+            "👤 {fio}\n"
+            "📅 Ishlangan kunlar: {days}\n"
+            "💰 Summa: {amount}\n\n"
+            "🎟 Promokod:\n*{code}*"
         ),
 
         "buttons": {
@@ -175,6 +188,7 @@ def send(chat_id, text, keyboard=None):
     requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)
 
 def reset_to_menu(chat_id, lang):
+    # FIX: lang всегда сохраняется
     user_states[chat_id] = "MENU"
     user_data[chat_id] = {"lang": lang}
     send(chat_id, TEXTS[lang]["menu"], kb(TEXTS[lang]["menu_buttons"]))
@@ -232,7 +246,13 @@ def telegram():
     photos = msg.get("photo")
     state = user_states.get(cid)
 
+    # FIX: блокируем /start во время проверки
     if txt == "/start":
+        if state == "WAIT_RESULT":
+            lang = user_data.get(cid, {}).get("lang", "ru")
+            send(cid, TEXTS[lang]["wait_result"])
+            return "ok"
+
         user_states[cid] = "LANG"
         user_data[cid] = {}
         send(cid, TEXTS["ru"]["choose_lang"], kb(["Русский 🇷🇺", "O‘zbek 🇺🇿"]))
@@ -259,11 +279,12 @@ def telegram():
                     fio, code, amount, days = reward
                     send(
                         cid,
-                        f"🎁 *Вознаграждение*\n\n"
-                        f"👤 {fio}\n"
-                        f"📅 Отработано дней: {days}\n"
-                        f"💰 Сумма: {amount}\n\n"
-                        f"🎟 Промокод:\n*{code}*"
+                        TEXTS[lang]["reward_info"].format(
+                            fio=fio,
+                            days=days,
+                            amount=amount,
+                            code=code
+                        )
                     )
         return "ok"
 
@@ -297,6 +318,9 @@ def telegram():
         return "ok"
 
     if state == "WAIT_PHOTO":
+        # FIX: защита от KeyError
+        user_data[cid].setdefault("photos", [])
+
         if photos:
             user_data[cid]["photos"].append(download_file(photos[-1]["file_id"]))
             left = REQUIRED_PHOTOS - len(user_data[cid]["photos"])
@@ -324,7 +348,8 @@ def telegram():
             user_data[cid]["sla_notified"] = False
             user_states[cid] = "WAIT_RESULT"
 
-            send(cid, TEXTS[lang]["submitted"])
+            # FIX: убираем клавиатуру
+            send(cid, TEXTS[lang]["submitted"], {"remove_keyboard": True})
             return "ok"
 
     return "ok"
@@ -449,8 +474,9 @@ def sla_monitor():
                 data = user_data.get(cid)
                 if not data or data.get("sla_notified"):
                     continue
-                if now - data["submitted_at"] > SLA_SECONDS:
-                    send(cid, TEXTS[data["lang"]]["sla_late"])
+                if now - data.get("submitted_at", now) > SLA_SECONDS:
+                    lang = data.get("lang", "ru")  # FIX
+                    send(cid, TEXTS[lang]["sla_late"])
                     data["sla_notified"] = True
         time.sleep(60)
 
@@ -464,6 +490,7 @@ def root():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
 
 
 
