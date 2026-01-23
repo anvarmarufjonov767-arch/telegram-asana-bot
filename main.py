@@ -4,7 +4,7 @@ import os
 import time
 import threading
 import re
-import hashlib  # NEW: anti-duplicate photos
+import hashlib
 from openpyxl import load_workbook
 
 app = Flask(__name__)
@@ -29,8 +29,8 @@ REWARDS_FILE = "data/rewards.xlsx"
 # ======================= STATE =============================
 # =========================================================
 
-user_states = {}          # chat_id -> state
-user_data = {}            # chat_id -> dict
+user_states = {}
+user_data = {}
 sent_notifications = set()
 
 # =========================================================
@@ -41,46 +41,33 @@ TEXTS = {
     "ru": {
         "choose_lang": "🌐 Выберите язык",
         "menu": "Выберите нужный раздел:",
-        "menu_buttons": [
-            "📸 Фото-контроль",
-            "🎁 Вознаграждение",
-            "📄 Статус заявки"
-        ],
+        "menu_buttons": ["📸 Фото-контроль", "🎁 Вознаграждение", "📄 Статус заявки"],
 
         "start_info": (
             "🚗 *Фото-контроль брендированного автомобиля*\n\n"
-            "Порядок действий:\n"
             "1️⃣ Введите ФИО\n"
             "2️⃣ Введите табельный номер\n"
-            "3️⃣ Отправьте 3 фотографии автомобиля\n\n"
-            "⚠️ На фото должен быть *чётко виден брендинг и госномер*."
+            "3️⃣ Отправьте 3 фото автомобиля\n\n"
+            "⚠️ Брендинг и госномер должны быть чётко видны."
         ),
 
         "fio": "✍️ *Шаг 1 из 3*\nВведите ФИО полностью",
+
         "tab": (
-            "🔢 *Шаг 2 из 3*\n\n"
+            "🔢 *Шаг 2 из 3*\n"
             "Введите табельный номер\n\n"
-            "• только цифры\n"
-            "• ровно 5 цифр"
+            "📌 Пример: `12345`"
         ),
-        "tab_invalid": "❌ Табельный номер должен состоять из *5 цифр*.",
+        "tab_invalid": "❌ Табельный номер должен состоять из *5 цифр*.\n📌 Пример: `12345`",
 
-        "photo": (
-            "📸 *Шаг 3 из 3*\n\n"
-            "Отправьте 3 фото:\n"
-            "Каждое фото — *отдельным сообщением*."
-        ),
-        "photo_left": "📸 Фото принято. Осталось: {n}",
-        "photo_done": "✅ Все фотографии получены.\nНажмите «Завершить».",
+        "photo": "📸 *Шаг 3 из 3*\nОтправьте 3 фото по одному.",
 
-        # NEW: anti-duplicate
-        "photo_duplicate": "❌ Это фото уже было отправлено. Пожалуйста, сделайте другое.",
+        "photo_duplicate": "❌ Это фото уже было отправлено.\n📸 Сделайте новое фото.",
+        "photo_wrong_state": "❌ Сейчас нельзя отправлять фото.\n📸 Нажмите «Начать» и следуйте шагам.",
 
-        "submitted": (
-            "⏳ *Заявка отправлена*\n\n"
-            "Материалы переданы на проверку.\n"
-            "⛔ Пока идёт проверка, бот недоступен."
-        ),
+        "photo_done": "✅ Все фото получены.\nНажмите «Завершить».",
+
+        "submitted": "⏳ *Заявка отправлена*. Материалы переданы на проверку.",
         "wait_result": "⏳ Ваша заявка находится на проверке.",
         "sla_late": "⏳ Проверка занимает больше времени, чем обычно.",
 
@@ -100,6 +87,7 @@ TEXTS = {
         ),
 
         "status_no_task": "📄 У вас нет активной заявки.",
+
         "status_text": (
             "📄 *Статус заявки*\n\n"
             "🆔 ID: {gid}\n"
@@ -125,11 +113,7 @@ TEXTS = {
     "uz": {
         "choose_lang": "🌐 Tilni tanlang",
         "menu": "Kerakli bo‘limni tanlang:",
-        "menu_buttons": [
-            "📸 Foto-nazorat",
-            "🎁 Mukofot",
-            "📄 Ariza holati"
-        ],
+        "menu_buttons": ["📸 Foto-nazorat", "🎁 Mukofot", "📄 Ariza holati"],
 
         "start_info": (
             "🚗 *Avtomobil foto-nazorati*\n\n"
@@ -138,16 +122,17 @@ TEXTS = {
             "3️⃣ 3 ta foto yuboring"
         ),
 
-        "fio": "✍️ *1-bosqich*\nF.I.Sh ni kiriting",
-        "tab": "🔢 *2-bosqich*\n5 xonali tabel raqami",
-        "tab_invalid": "❌ Tabel raqami 5 ta raqam bo‘lishi kerak.",
+        "fio": "✍️ *1-bosqich*\nF.I.Sh kiriting",
+
+        "tab": "🔢 *2-bosqich*\n📌 Misol: `12345`",
+        "tab_invalid": "❌ Tabel raqami 5 ta raqamdan iborat.\n📌 Misol: `12345`",
 
         "photo": "📸 *3-bosqich*\n3 ta foto yuboring.",
-        "photo_left": "📸 Qabul qilindi. Qolgan: {n}",
-        "photo_done": "✅ Barcha foto qabul qilindi.\n«Yakunlash» ni bosing.",
 
-        # NEW: anti-duplicate
-        "photo_duplicate": "❌ Bu rasm allaqachon yuborilgan. Iltimos, boshqa rasm yuboring.",
+        "photo_duplicate": "❌ Bu rasm allaqachon yuborilgan.\n📸 Boshqa rasm oling.",
+        "photo_wrong_state": "❌ Hozir rasm yuborib bo‘lmaydi.\n📸 «Boshlash» tugmasini bosing.",
+
+        "photo_done": "✅ Barcha foto qabul qilindi.\n«Yakunlash» ni bosing.",
 
         "submitted": "⏳ *Ariza yuborildi*. Tekshiruv kutilmoqda.",
         "wait_result": "⏳ Ariza tekshiruvda.",
@@ -169,6 +154,7 @@ TEXTS = {
         ),
 
         "status_no_task": "📄 Sizda faol ariza yo‘q.",
+
         "status_text": (
             "📄 *Ariza holati*\n\n"
             "🆔 ID: {gid}\n"
@@ -215,6 +201,15 @@ def download_file(file_id):
     path = info["result"]["file_path"]
     return requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}").content
 
+def photo_progress(count):
+    lines = []
+    for i in range(1, REQUIRED_PHOTOS + 1):
+        if i <= count:
+            lines.append(f"📸 Фото {i}/{REQUIRED_PHOTOS} ✅")
+        else:
+            lines.append(f"📸 Фото {i}/{REQUIRED_PHOTOS} ⏳")
+    return "\n".join(lines)
+
 def get_asana_status(task_gid):
     r = requests.get(
         f"https://app.asana.com/api/1.0/tasks/{task_gid}",
@@ -224,32 +219,6 @@ def get_asana_status(task_gid):
     if r.status_code != 200:
         return None
     return r.json()["data"]["approval_status"]
-
-# =========================================================
-# ======================= REWARDS ===========================
-# =========================================================
-
-def get_reward(chat_id):
-    if not os.path.exists(REWARDS_FILE):
-        return None
-
-    wb = load_workbook(REWARDS_FILE, data_only=True)
-    ws = wb.active
-
-    headers = {}
-    for i, cell in enumerate(ws[1]):
-        headers[str(cell.value).strip()] = i
-
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        tg_id = row[headers["Telegram ID"]]
-        if tg_id and str(tg_id).strip() == str(chat_id):
-            return (
-                row[headers["ФИО"]],
-                row[headers["Промокод"]],
-                row[headers["Сумма"]],
-                row[headers["Отработанные дни"]],
-            )
-    return None
 
 # =========================================================
 # ======================= TELEGRAM ==========================
@@ -268,6 +237,10 @@ def telegram():
     lang = user_data.get(cid, {}).get("lang", "ru")
     btn = TEXTS[lang]["buttons"]
 
+    if photos and state != "WAIT_PHOTO":
+        send(cid, TEXTS[lang]["photo_wrong_state"])
+        return "ok"
+
     if txt == "/start":
         if state == "WAIT_RESULT":
             send(cid, TEXTS[lang]["wait_result"])
@@ -282,6 +255,7 @@ def telegram():
         reset_to_menu(cid, lang)
         return "ok"
 
+    # ---------- STATUS ----------
     if txt in ("📄 Статус заявки", "📄 Ariza holati"):
         task_gid = user_data.get(cid, {}).get("task_gid")
         if not task_gid:
@@ -317,12 +291,9 @@ def telegram():
                     send(cid, TEXTS[lang]["reward_not_found"])
                 else:
                     fio, code, amount, days = reward
-                    send(
-                        cid,
-                        TEXTS[lang]["reward_info"].format(
-                            fio=fio, code=code, amount=amount, days=days
-                        )
-                    )
+                    send(cid, TEXTS[lang]["reward_info"].format(
+                        fio=fio, code=code, amount=amount, days=days
+                    ))
         return "ok"
 
     if state == "WAIT_RESULT":
@@ -332,7 +303,7 @@ def telegram():
     if state == "READY" and txt == btn["start"]:
         user_states[cid] = "WAIT_FIO"
         user_data[cid]["photos"] = []
-        user_data[cid]["photo_hashes"] = set()  # NEW: anti-duplicate
+        user_data[cid]["photo_hashes"] = set()
         send(cid, TEXTS[lang]["fio"], kb([btn["cancel"], btn["cancel_request"]]))
         return "ok"
 
@@ -351,51 +322,72 @@ def telegram():
         send(cid, TEXTS[lang]["photo"], kb([btn["cancel"], btn["cancel_request"]]))
         return "ok"
 
-    if state == "WAIT_PHOTO":
-        user_data[cid].setdefault("photos", [])
-        user_data[cid].setdefault("photo_hashes", set())
+    if state == "WAIT_PHOTO" and photos:
+        file_bytes = download_file(photos[-1]["file_id"])
+        file_hash = hashlib.md5(file_bytes).hexdigest()
 
-        if photos:
-            file_bytes = download_file(photos[-1]["file_id"])
-
-            # NEW: anti-duplicate
-            file_hash = hashlib.md5(file_bytes).hexdigest()
-            if file_hash in user_data[cid]["photo_hashes"]:
-                send(cid, TEXTS[lang]["photo_duplicate"])
-                return "ok"
-
-            user_data[cid]["photo_hashes"].add(file_hash)
-            user_data[cid]["photos"].append(file_bytes)
-
-            left = REQUIRED_PHOTOS - len(user_data[cid]["photos"])
-            if left > 0:
-                send(cid, TEXTS[lang]["photo_left"].format(n=left))
-            else:
-                send(cid, TEXTS[lang]["photo_done"], kb([btn["finish"]]))
+        if file_hash in user_data[cid]["photo_hashes"]:
+            send(cid, TEXTS[lang]["photo_duplicate"])
             return "ok"
 
-        if txt == btn["finish"]:
-            if len(user_data[cid]["photos"]) != REQUIRED_PHOTOS:
-                send(cid, TEXTS[lang]["need_photos"])
-                return "ok"
+        user_data[cid]["photo_hashes"].add(file_hash)
+        user_data[cid]["photos"].append(file_bytes)
 
-            task_gid = create_asana_task(
-                user_data[cid]["fio"],
-                user_data[cid]["tab"],
-                cid,
-                user_data[cid]["photos"],
-                lang
-            )
+        progress = photo_progress(len(user_data[cid]["photos"]))
+        if len(user_data[cid]["photos"]) == REQUIRED_PHOTOS:
+            send(cid, progress + "\n\n" + TEXTS[lang]["photo_done"], kb([btn["finish"]]))
+        else:
+            send(cid, progress)
+        return "ok"
 
-            user_data[cid]["task_gid"] = task_gid
-            user_data[cid]["submitted_at"] = time.time()
-            user_data[cid]["sla_notified"] = False
-            user_states[cid] = "WAIT_RESULT"
-
-            send(cid, TEXTS[lang]["submitted"], {"remove_keyboard": True})
+    if state == "WAIT_PHOTO" and txt == btn["finish"]:
+        if len(user_data[cid]["photos"]) != REQUIRED_PHOTOS:
+            send(cid, TEXTS[lang]["need_photos"])
             return "ok"
+
+        task_gid = create_asana_task(
+            user_data[cid]["fio"],
+            user_data[cid]["tab"],
+            cid,
+            user_data[cid]["photos"],
+            lang
+        )
+
+        user_data[cid]["task_gid"] = task_gid
+        user_data[cid]["submitted_at"] = time.time()
+        user_data[cid]["sla_notified"] = False
+        user_states[cid] = "WAIT_RESULT"
+
+        send(cid, TEXTS[lang]["submitted"], {"remove_keyboard": True})
+        return "ok"
 
     return "ok"
+
+# =========================================================
+# ======================= REWARDS ===========================
+# =========================================================
+
+def get_reward(chat_id):
+    if not os.path.exists(REWARDS_FILE):
+        return None
+
+    wb = load_workbook(REWARDS_FILE, data_only=True)
+    ws = wb.active
+
+    headers = {}
+    for i, cell in enumerate(ws[1]):
+        headers[str(cell.value).strip()] = i
+
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        tg_id = row[headers["Telegram ID"]]
+        if tg_id and str(tg_id).strip() == str(chat_id):
+            return (
+                row[headers["ФИО"]],
+                row[headers["Промокод"]],
+                row[headers["Сумма"]],
+                row[headers["Отработанные дни"]],
+            )
+    return None
 
 # =========================================================
 # ======================= ASANA =============================
@@ -431,11 +423,11 @@ def create_asana_task(fio, tab, tg_id, photos, lang):
         }}
     ).json()["data"]
 
-    for p in photos:
+    for i, p in enumerate(photos, start=1):
         requests.post(
             f"https://app.asana.com/api/1.0/tasks/{task['gid']}/attachments",
             headers=ASANA_HEADERS,
-            files={"file": p}
+            files={"file": (f"photo_{i}.jpg", p, "image/jpeg")}
         )
 
     return task["gid"]
@@ -531,6 +523,7 @@ def root():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
 
 
 
