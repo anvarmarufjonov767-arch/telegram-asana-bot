@@ -517,9 +517,9 @@ def sla_monitor():
 
 threading.Thread(target=sla_monitor, daemon=True).start()
 
-@app.route("/")
+@app.route("/", methods=["GET", "HEAD"])
 def root():
-    return "OK"
+    return "", 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
